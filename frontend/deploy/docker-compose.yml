@@ -1,0 +1,65 @@
+name: super-search
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: url_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d url_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - internal
+
+  backend:
+    image: super-search-urldb:melost
+    build:
+      context: ../../backend
+      target: backend
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      DB_NAME: url_db
+      PORT: 8080
+      TIMEZONE: Asia/Shanghai
+      GIN_MODE: release
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - uploads:/root/uploads
+    networks:
+      - internal
+
+  frontend:
+    image: super-search-next:melost
+    build:
+      context: ..
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      URLDB_API_BASE: http://backend:8080/api
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:13000:3000"
+    networks:
+      - internal
+
+volumes:
+  postgres_data:
+  uploads:
+
+networks:
+  internal:
+    driver: bridge
