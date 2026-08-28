@@ -51,6 +51,20 @@ services:
     networks:
       - internal
 
+  admin:
+    image: ghcr.io/zhangrj6/super-search-admin:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NUXT_PUBLIC_API_SERVER: http://backend:8080/api
+      NUXT_PUBLIC_API_CLIENT: /api
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-13001}:3000"
+    networks:
+      - internal
+
 volumes:
   postgres_data:
   uploads:
