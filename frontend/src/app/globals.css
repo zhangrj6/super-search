@@ -83,6 +83,83 @@ a {
   html {
     scroll-behavior: auto;
   }
+
+  .site-shell__grid,
+  .site-shell__scanline {
+    animation: none;
+  }
+}
+
+.site-shell {
+  isolation: isolate;
+  position: relative;
+  min-height: 100vh;
+  overflow: clip;
+  background:
+    linear-gradient(135deg, #f5f9fd 0%, #eff5fa 52%, #eaf4f9 100%);
+}
+
+.site-shell::before,
+.site-shell::after {
+  position: absolute;
+  pointer-events: none;
+  content: "";
+}
+
+.site-shell::before {
+  inset: -28%;
+  z-index: -3;
+  background: linear-gradient(118deg, transparent 18%, rgb(67 171 232 / 0.07) 45%, transparent 68%);
+  filter: blur(24px);
+  animation: site-shell-drift 18s ease-in-out infinite alternate;
+}
+
+.site-shell::after {
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(90deg, transparent 0%, rgb(255 255 255 / 0.2) 50%, transparent 100%);
+}
+
+.site-shell__grid {
+  position: absolute;
+  inset: -8rem;
+  z-index: -2;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgb(109 174 207 / 0.085) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(109 174 207 / 0.085) 1px, transparent 1px);
+  background-size: 58px 58px;
+  opacity: 0.72;
+  animation: site-shell-grid 28s linear infinite;
+}
+
+.site-shell__scanline {
+  position: absolute;
+  top: 0;
+  left: -10%;
+  z-index: -1;
+  width: 120%;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgb(67 171 232 / 0.24), transparent);
+  box-shadow: 0 0 22px 4px rgb(67 171 232 / 0.08);
+  animation: site-shell-scan 12s ease-in-out infinite;
+}
+
+@keyframes site-shell-drift {
+  from { transform: translate3d(-2%, -1%, 0) scale(0.98); }
+  to { transform: translate3d(2%, 1%, 0) scale(1.02); }
+}
+
+@keyframes site-shell-grid {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(58px, 58px, 0); }
+}
+
+@keyframes site-shell-scan {
+  0%, 100% { transform: translateY(-4vh); opacity: 0; }
+  18%, 78% { opacity: 1; }
+  50% { transform: translateY(104vh); }
 }
 
 :root {
@@ -92,18 +169,18 @@ a {
   --card-foreground: #111827;
   --popover: #ffffff;
   --popover-foreground: #111827;
-  --primary: #4f6ef7;
+  --primary: #43abe8;
   --primary-foreground: #ffffff;
   --secondary: #f1f3f8;
   --secondary-foreground: #374151;
   --muted: #f1f3f8;
   --muted-foreground: #667085;
-  --accent: #eef1ff;
-  --accent-foreground: #4056ba;
+  --accent: #eaf7fd;
+  --accent-foreground: #2b83b4;
   --destructive: #dc2626;
   --border: #e4e7ef;
   --input: #e4e7ef;
-  --ring: #4f6ef7;
+  --ring: #43abe8;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);

@@ -1,6 +1,6 @@
 export default function ResourceLoading() {
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-transparent text-foreground">
       <header className="h-16 border-b border-border bg-background" />
       <main className="mx-auto max-w-5xl px-5 py-6 sm:px-8 sm:py-8">
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:gap-6">

@@ -3,8 +3,8 @@ import { SearchResults } from "@/components/search-results";
 import { isProvider, type Provider } from "@/lib/resources";
 
 export const metadata: Metadata = {
-  title: "搜索结果 - PanSearch",
-  description: "查看 PanSearch 聚合的网盘资源搜索结果。",
+  title: "搜索结果 - 聚优盘",
+  description: "查看聚优盘聚合的网盘资源搜索结果。",
 };
 
 type SearchPageProps = {

@@ -1,61 +1,17 @@
 "use client";
 
+import Image from "next/image";
 import { LoaderCircle, Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Provider } from "@/lib/resources";
-
-const PROVIDERS: Array<{ value: Provider; className: string }> = [
-  {
-    value: "全部",
-    className: "data-active:bg-primary/10 data-active:text-primary",
-  },
-  {
-    value: "百度网盘",
-    className: "data-active:bg-blue-50 data-active:text-blue-600",
-  },
-  {
-    value: "阿里云盘",
-    className: "data-active:bg-orange-50 data-active:text-orange-600",
-  },
-  {
-    value: "夸克网盘",
-    className: "data-active:bg-violet-50 data-active:text-violet-600",
-  },
-  {
-    value: "UC网盘",
-    className: "data-active:bg-emerald-50 data-active:text-emerald-700",
-  },
-  {
-    value: "迅雷云盘",
-    className: "data-active:bg-red-50 data-active:text-red-600",
-  },
-];
-
-const HOT_SEARCHES = [
-  "Python 教程",
-  "机器学习",
-  "前端开发",
-  "4K 壁纸",
-  "Blender",
-  "算法导论",
-  "Linux 内核",
-  "设计模板",
-];
-
-const STATS = [
-  { label: "收录资源", value: "2,400万+" },
-  { label: "支持网盘", value: "5 个" },
-  { label: "今日更新", value: "12万+" },
-  { label: "日均搜索", value: "80万+" },
-];
+import logo from "@/assets/logo.png";
 
 export function ResourceSearch() {
   const router = useRouter();
-  const [provider, setProvider] = useState<Provider>("全部");
+  const [provider] = useState<Provider>("全部");
   const [query, setQuery] = useState("");
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -98,58 +54,55 @@ export function ResourceSearch() {
   }
 
   return (
-    <main className="flex flex-1 flex-col">
-      <section className="mx-auto flex min-h-[calc(100svh-7rem)] w-full max-w-6xl flex-col px-5 pb-7 sm:min-h-[calc(100svh-7.5rem)] sm:px-8 sm:pb-8">
+    <main className="flex min-h-screen flex-col overflow-hidden bg-transparent">
+      <section className="relative z-10 mx-auto flex min-h-[calc(100svh-7rem)] w-full max-w-5xl flex-1 flex-col justify-center px-5 py-12 sm:px-8 sm:py-16">
         <div
           id="search"
-          className="flex flex-1 scroll-mt-6 flex-col items-center justify-center py-10 text-center sm:py-12"
+          className="-translate-y-14 flex scroll-mt-6 flex-col items-center justify-center text-center sm:-translate-y-20"
         >
-          <div className="mb-6 flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-medium text-blue-600 sm:mb-7">
-            <span
-              className="size-1.5 rounded-full bg-blue-500 motion-safe:animate-pulse"
-              aria-hidden="true"
-            />
-            实时收录 · 每日更新 12 万+ 资源
-          </div>
-
-          <h1 className="max-w-3xl text-[2.375rem] leading-[1.2] font-bold tracking-normal sm:text-5xl sm:leading-[1.15]">
-            搜遍全网<span className="text-primary">网盘资源</span>
-          </h1>
-          <p
-            id="search-description"
-            className="mt-4 max-w-lg text-sm leading-7 text-muted-foreground sm:text-base"
+          <a
+            className="mb-8 flex flex-col items-center rounded-xl outline-none transition-transform duration-200 hover:scale-[1.015] focus-visible:ring-4 focus-visible:ring-primary/15 sm:mb-9"
+            href="#search"
+            aria-label="聚优盘首页"
           >
-            聚合百度网盘、阿里云盘、夸克网盘等主流平台
-            <span className="hidden sm:inline">，</span>
-            <br className="hidden sm:block" />
-            一键找到你想要的文件。
-          </p>
+            <Image
+              className="h-auto w-[min(12.5rem,52vw)] drop-shadow-[0_12px_22px_rgb(47_147_205_/_0.18)] sm:w-[16rem]"
+              src={logo}
+              alt="聚优盘"
+              width={562}
+              height={237}
+              priority
+              unoptimized
+            />
+            <span className="mt-3 text-xs font-medium tracking-[0.28em] text-slate-500/85 sm:mt-3.5 sm:text-sm">
+              尽在聚优 一搜即可
+            </span>
+          </a>
 
-          <form className="mt-8 w-full max-w-2xl" onSubmit={handleSubmit}>
+          <form className="w-full max-w-2xl" onSubmit={handleSubmit}>
             <label className="sr-only" htmlFor="resource-query">
               搜索文件名或资源关键词
             </label>
-            <div className="group flex h-16 items-center gap-2 rounded-2xl border border-border bg-card pr-2.5 pl-4 shadow-[0_2px_16px_rgb(17_24_39_/_0.04)] transition-[border-color,box-shadow] duration-200 focus-within:border-primary focus-within:shadow-[0_0_0_4px_rgb(79_110_247_/_0.08),0_8px_28px_rgb(17_24_39_/_0.06)] sm:gap-3 sm:px-3 sm:pl-5">
+            <div className="group flex h-[4.25rem] items-center gap-2 rounded-[1.25rem] border border-white/80 bg-white/80 pr-2.5 pl-5 shadow-[0_18px_55px_rgb(15_23_42_/_0.1),inset_0_1px_0_rgb(255_255_255_/_0.9)] backdrop-blur-xl transition-[border-color,box-shadow,transform,background-color] duration-300 focus-within:-translate-y-0.5 focus-within:border-primary/60 focus-within:bg-white/95 focus-within:shadow-[0_0_0_4px_rgb(67_171_232_/_0.13),0_22px_60px_rgb(15_23_42_/_0.14),inset_0_1px_0_rgb(255_255_255_/_0.95)] sm:gap-3 sm:pr-3 sm:pl-6">
               <Search
-                className="size-5 shrink-0 text-muted-foreground transition-colors group-focus-within:text-primary"
-                strokeWidth={1.8}
+                className="size-5 shrink-0 text-slate-400 transition-colors group-focus-within:text-primary"
+                strokeWidth={2}
                 aria-hidden="true"
               />
               <Input
                 ref={inputRef}
                 id="resource-query"
-                className="h-12 min-w-0 flex-1 border-0 bg-transparent px-0 text-base shadow-none focus-visible:border-0 focus-visible:ring-0 md:text-base"
+                className="h-12 min-w-0 flex-1 border-0 bg-transparent px-0 text-base text-slate-800 shadow-none placeholder:text-slate-400 focus-visible:border-0 focus-visible:ring-0 md:text-base"
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索文件名、资源关键词..."
-                aria-describedby="search-description"
+                placeholder="搜索影视、教程、资源关键词..."
                 aria-keyshortcuts="/"
                 autoComplete="off"
               />
               {query ? (
                 <Button
-                  className="size-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+                  className="size-9 shrink-0 rounded-full text-slate-400 hover:text-slate-700"
                   variant="secondary"
                   size="icon"
                   type="button"
@@ -163,7 +116,7 @@ export function ResourceSearch() {
                 </Button>
               ) : null}
               <Button
-                className="h-11 min-w-16 shrink-0 rounded-xl px-4 text-sm font-semibold shadow-[0_3px_10px_rgb(79_110_247_/_0.25)] hover:bg-primary/90 sm:min-w-20 sm:px-6"
+                className="h-10 min-w-16 shrink-0 rounded-[0.9rem] bg-primary px-4 text-sm font-semibold text-white shadow-[0_6px_18px_rgb(67_171_232_/_0.3)] transition-all hover:-translate-y-px hover:bg-primary/90 hover:shadow-[0_8px_22px_rgb(67_171_232_/_0.36)] sm:min-w-20 sm:px-6"
                 type="submit"
                 disabled={isPending}
               >
@@ -176,65 +129,13 @@ export function ResourceSearch() {
             </div>
           </form>
 
-          <div className="mt-5 flex w-full max-w-2xl flex-col items-center gap-2.5">
-            <span className="text-xs text-muted-foreground">热门搜索</span>
-            <div className="flex flex-wrap justify-center gap-2">
-              {HOT_SEARCHES.map((item) => (
-                <Button
-                  className="h-8 rounded-lg border-border bg-card px-3 text-xs font-normal text-muted-foreground shadow-none hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600"
-                  variant="outline"
-                  size="sm"
-                  type="button"
-                  key={item}
-                  onClick={() => runSearch(item)}
-                  disabled={isPending}
-                >
-                  {item}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          <div id="sources" className="mt-9 w-full scroll-mt-8 sm:mt-11">
-            <Tabs
-              value={provider}
-              onValueChange={(value) => setProvider(value as Provider)}
-            >
-              <div className="flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
-                <span className="shrink-0 text-xs text-muted-foreground">已接入</span>
-                <TabsList className="flex h-auto w-full max-w-2xl flex-wrap gap-2 bg-transparent p-0">
-                  {PROVIDERS.map((item) => (
-                    <TabsTrigger
-                      className={`h-8 flex-none rounded-lg border-0 bg-card px-2.5 text-xs font-medium text-muted-foreground shadow-none data-active:shadow-none ${item.className}`}
-                      value={item.value}
-                      key={item.value}
-                      disabled={isPending}
-                    >
-                      {item.value}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </div>
-            </Tabs>
-          </div>
         </div>
-
-        <dl className="mx-auto grid w-full max-w-3xl grid-cols-2 overflow-hidden rounded-2xl border border-border bg-card px-3 py-4 shadow-[0_2px_16px_rgb(17_24_39_/_0.04)] sm:grid-cols-4 sm:px-0 sm:py-5">
-          {STATS.map((stat, index) => (
-            <div
-              className={`relative px-3 py-2 text-center sm:px-6 ${
-                index % 2 === 0 ? "border-r border-border sm:border-r" : "sm:border-r"
-              } ${index < 2 ? "border-b border-border sm:border-b-0" : ""} ${
-                index === STATS.length - 1 ? "sm:border-r-0" : ""
-              }`}
-              key={stat.label}
-            >
-              <dt className="mt-1 text-xs text-muted-foreground">{stat.label}</dt>
-              <dd className="text-xl font-bold tabular-nums sm:text-2xl">{stat.value}</dd>
-            </div>
-          ))}
-        </dl>
       </section>
+      <footer className="relative z-10 mx-auto w-full max-w-4xl px-5 pb-5 text-center text-[11px] leading-5 text-slate-500/80 sm:px-8 sm:pb-6 sm:text-xs sm:leading-6">
+        <p>
+          免责声明：聚优盘仅提供公开网盘链接索引服务，本站不存储、不上传任何资源文件。所有资源版权归原作者所有，仅供个人学习交流，禁止商用。如存在侵权，请联系站长处理，我们将及时删除对应链接。
+        </p>
+      </footer>
     </main>
   );
 }

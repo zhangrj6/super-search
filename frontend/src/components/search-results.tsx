@@ -2,19 +2,25 @@
 
 import {
   AlertCircle,
+  ArrowDown,
+  ArrowDownUp,
+  ArrowUp,
   Archive,
   BookOpenText,
   ChevronLeft,
   ChevronRight,
   FileText,
   Film,
+  Link2,
   LoaderCircle,
   Music2,
   RefreshCw,
+  RotateCcw,
   Search,
   SearchX,
   X,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState, useTransition } from "react";
@@ -22,7 +28,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  formatBytes,
   inferResourceType,
   PROVIDER_CODES,
   PROVIDER_VALUES,
@@ -35,6 +40,7 @@ import {
   type Provider,
   type ResourceType,
 } from "@/lib/resources";
+import logo from "@/assets/logo.png";
 
 const PROVIDER_STYLES: Record<DriveProvider, string> = {
   百度网盘: "bg-blue-50 text-blue-600",
@@ -53,6 +59,7 @@ const TYPE_STYLES: Record<ResourceType, string> = {
 };
 
 type StageState = { status: "opening" | "failed"; error?: string };
+type DateSort = "default" | "desc" | "asc";
 
 function ResourceIcon({ type }: { type: ResourceType }) {
   const className = "size-5";
@@ -88,6 +95,7 @@ export function SearchResults({
   const [isLoading, setIsLoading] = useState(Boolean(initialQuery));
   const [reloadSequence, setReloadSequence] = useState(0);
   const [stageStates, setStageStates] = useState<Record<string, StageState>>({});
+  const [dateSort, setDateSort] = useState<DateSort>("default");
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -169,33 +177,42 @@ export function SearchResults({
     });
   }
 
+  function cycleDateSort() {
+    setDateSort((current) => (current === "default" ? "desc" : current === "desc" ? "asc" : "default"));
+  }
+
+  async function stageResource(item: MelostSearchItem) {
+    const response = await fetch("/api/melost/resources", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        doc_id: item.doc_id,
+        title: item.disk_name,
+        link: item.link,
+        disk_type: item.disk_type,
+        disk_pass: item.disk_pass,
+        files: item.files,
+        tags: item.tags,
+        shared_time: item.shared_time,
+        share_user: item.share_user,
+        size: item.size,
+      }),
+    });
+    const data = await readApiData<MelostStageResponse>(response);
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(data.resource_key)) {
+      throw new Error("资源详情地址生成失败");
+    }
+    return data.resource_key;
+  }
+
   async function stageAndOpen(item: MelostSearchItem) {
     const itemKey = item.doc_id || item.link;
     if (!item.can_stage || stageStates[itemKey]?.status === "opening") return;
 
     setStageStates((current) => ({ ...current, [itemKey]: { status: "opening" } }));
     try {
-      const response = await fetch("/api/melost/resources", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          doc_id: item.doc_id,
-          title: item.disk_name,
-          link: item.link,
-          disk_type: item.disk_type,
-          disk_pass: item.disk_pass,
-          files: item.files,
-          tags: item.tags,
-          shared_time: item.shared_time,
-          share_user: item.share_user,
-          size: item.size,
-        }),
-      });
-      const data = await readApiData<MelostStageResponse>(response);
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(data.resource_key)) {
-        throw new Error("资源详情地址生成失败");
-      }
-      router.push(buildResourceUrl(data.resource_key));
+      const resourceKey = await stageResource(item);
+      router.push(buildResourceUrl(resourceKey));
     } catch (error) {
       setStageStates((current) => ({
         ...current,
@@ -211,9 +228,19 @@ export function SearchResults({
   const total = searchData?.total ?? 0;
   const pageSize = searchData?.page_size || 20;
   const totalPages = Math.max(1, Math.min(500, Math.ceil(total / pageSize)));
+  const sortedResults = dateSort === "default"
+    ? results
+    : [...results].sort((left, right) => {
+        const leftTime = Date.parse(left.shared_time);
+        const rightTime = Date.parse(right.shared_time);
+        const leftValue = Number.isNaN(leftTime) ? -Infinity : leftTime;
+        const rightValue = Number.isNaN(rightTime) ? -Infinity : rightTime;
+        return dateSort === "desc" ? rightValue - leftValue : leftValue - rightValue;
+      });
+  const dateSortLabel = dateSort === "default" ? "默认排序" : dateSort === "desc" ? "最新优先" : "最早优先";
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className="flex flex-col bg-transparent text-foreground">
       <a
         className="fixed top-3 left-3 z-50 -translate-y-20 rounded-lg bg-foreground px-3 py-2 text-sm font-medium text-background transition-transform focus:translate-y-0"
         href="#result-list"
@@ -226,12 +253,9 @@ export function SearchResults({
           <Link
             className="flex min-h-10 items-center gap-2.5 rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/25"
             href="/"
-            aria-label="返回 PanSearch 首页"
+            aria-label="返回聚优盘首页"
           >
-            <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground shadow-[0_3px_10px_rgb(79_110_247_/_0.24)]">
-              P
-            </span>
-            <span className="hidden text-sm font-semibold sm:inline">PanSearch</span>
+            <Image className="h-8 w-auto" src={logo} alt="聚优盘" width={562} height={237} unoptimized />
           </Link>
 
           <form
@@ -321,12 +345,11 @@ export function SearchResults({
 
       <main
         id="result-list"
-        className="mx-auto w-full max-w-5xl flex-1 scroll-mt-32 px-5 py-7 sm:px-8 sm:py-9"
+        className="mx-auto w-full max-w-5xl scroll-mt-32 px-5 py-7 pb-24 sm:px-8 sm:py-9 sm:pb-28"
         aria-busy={isLoading}
       >
         <div className="mb-5 flex items-end justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-xs text-muted-foreground">melost.cn 搜索结果</p>
             <h1 className="mt-1 truncate text-xl font-semibold sm:text-2xl">
               {initialQuery ? `“${initialQuery}”` : "搜索网盘资源"}
             </h1>
@@ -335,6 +358,41 @@ export function SearchResults({
             {provider === "全部" ? "全部来源" : provider}
           </span>
         </div>
+
+        {results.length > 0 ? (
+          <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-white/60 bg-white/35 px-3 py-2.5 shadow-[0_8px_24px_rgb(15_23_42_/_0.04)] backdrop-blur-lg sm:hidden">
+            <span className="text-xs font-medium text-slate-500">更新时间</span>
+            <div className="flex items-center gap-1.5">
+              <button
+                className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-slate-600 transition-colors hover:bg-white/55 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                type="button"
+                aria-label={`更新日期排序：${dateSortLabel}，点击切换`}
+                title={`当前：${dateSortLabel}，点击切换排序`}
+                onClick={cycleDateSort}
+              >
+                {dateSortLabel}
+                {dateSort === "desc" ? (
+                  <ArrowDown className="size-3.5 text-primary" aria-hidden="true" />
+                ) : dateSort === "asc" ? (
+                  <ArrowUp className="size-3.5 text-primary" aria-hidden="true" />
+                ) : (
+                  <ArrowDownUp className="size-3.5 text-slate-400" aria-hidden="true" />
+                )}
+              </button>
+              {dateSort !== "default" ? (
+                <button
+                  className="inline-flex size-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/55 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  type="button"
+                  aria-label="恢复默认排序"
+                  title="恢复默认排序"
+                  onClick={() => setDateSort("default")}
+                >
+                  <RotateCcw className="size-3.5" aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
         {isLoading ? (
           <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3" role="status" aria-label="正在加载搜索结果">
@@ -356,87 +414,113 @@ export function SearchResults({
             </Button>
           </div>
         ) : results.length > 0 ? (
-          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
-            {results.map((resource) => {
-              const resourceKey = resource.doc_id || resource.link;
-              const stageState = stageStates[resourceKey];
-              const resourceType = inferResourceType(`${resource.disk_name} ${resource.files}`);
-              const resourceProvider = providerFromDiskType(resource.disk_type);
-              const isOpening = stageState?.status === "opening";
-              const isDisabled = !resource.can_stage || isOpening;
-
-              return (
-                <button
-                  className={`group min-w-0 max-w-full overflow-hidden rounded-2xl border border-border bg-card text-left shadow-[0_1px_6px_rgb(17_24_39_/_0.03)] outline-none transition-[border-color,box-shadow] focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-ring/20 ${
-                    resource.can_stage
-                      ? "cursor-pointer hover:border-blue-200 hover:shadow-[0_6px_20px_rgb(17_24_39_/_0.06)]"
-                      : "cursor-not-allowed opacity-70"
-                  }`}
-                  type="button"
-                  key={resourceKey}
-                  disabled={isDisabled}
-                  onClick={() => stageAndOpen(resource)}
-                  aria-label={`打开${resource.disk_name}的资源详情`}
-                >
-                  <article className="flex min-w-0 max-w-full items-start gap-3 p-4 sm:gap-4 sm:p-5">
-                    <span
-                      className={`flex size-11 shrink-0 items-center justify-center rounded-xl sm:size-12 ${TYPE_STYLES[resourceType]}`}
-                      aria-hidden="true"
+          <div className="overflow-hidden rounded-2xl border border-white/60 bg-white/45 shadow-[0_18px_55px_rgb(15_23_42_/_0.08),inset_0_1px_0_rgb(255_255_255_/_0.72)] backdrop-blur-xl">
+            <div className="w-full overflow-x-auto">
+              <table className="block w-full border-collapse text-left sm:table sm:table-fixed">
+                <caption className="sr-only">搜索结果列表</caption>
+                <thead className="hidden sm:table-header-group">
+                  <tr className="border-b border-slate-200/70 bg-slate-50/45 text-xs font-medium text-slate-500">
+                    <th className="w-[43%] px-2 py-4 sm:w-[56%] sm:px-5">资源名称</th>
+                    <th
+                      className="w-[32%] px-2 py-4 sm:w-[20%] sm:px-5"
+                      aria-sort={dateSort === "default" ? "none" : dateSort === "desc" ? "descending" : "ascending"}
                     >
-                      <ResourceIcon type={resourceType} />
-                    </span>
-                    <span className="min-w-0 flex-1 overflow-hidden">
-                      <span className="block text-sm leading-6 font-semibold [overflow-wrap:anywhere] transition-colors group-hover:text-primary sm:text-base">
-                        {resource.disk_name}
-                      </span>
-                      {resource.files ? (
-                        <span className="mt-1 line-clamp-2 block text-sm leading-6 [overflow-wrap:anywhere] text-muted-foreground">
-                          {resource.files}
-                        </span>
-                      ) : null}
-                      {resource.tags.length > 0 ? (
-                        <span className="mt-3 flex flex-wrap gap-1.5">
-                          {resource.tags.slice(0, 4).map((tag) => (
-                            <span className="rounded-md bg-muted px-2 py-1 text-[11px] text-muted-foreground" key={tag}>
-                              {tag}
+                      <div className="flex items-center gap-1 sm:gap-1.5">
+                        <button
+                          className="inline-flex items-center gap-1 rounded-md px-0.5 py-1 text-left transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:gap-1.5 sm:px-1"
+                          type="button"
+                          aria-label={`更新日期排序：${dateSortLabel}，点击切换`}
+                          title={`当前：${dateSortLabel}，点击切换排序`}
+                          onClick={cycleDateSort}
+                        >
+                          更新日期
+                          {dateSort === "desc" ? <ArrowDown className="size-3.5 text-primary" aria-hidden="true" /> : dateSort === "asc" ? <ArrowUp className="size-3.5 text-primary" aria-hidden="true" /> : <ArrowDownUp className="size-3.5 text-slate-400" aria-hidden="true" />}
+                        </button>
+                        {dateSort !== "default" ? (
+                          <button
+                            className="inline-flex size-5 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:size-6"
+                            type="button"
+                            aria-label="恢复默认排序"
+                            title="恢复默认排序"
+                            onClick={() => setDateSort("default")}
+                          >
+                            <RotateCcw className="size-3.5" aria-hidden="true" />
+                          </button>
+                        ) : null}
+                      </div>
+                    </th>
+                    <th className="sticky right-0 z-20 w-[25%] bg-transparent px-1 py-4 text-right sm:w-[24%] sm:px-5">操作</th>
+                  </tr>
+                </thead>
+                <tbody className="block divide-y divide-slate-200/70 sm:table-row-group">
+                  {sortedResults.map((resource) => {
+                    const resourceKey = resource.doc_id || resource.link;
+                    const stageState = stageStates[resourceKey];
+                    const resourceType = inferResourceType(`${resource.disk_name} ${resource.files}`);
+                    const resourceProvider = providerFromDiskType(resource.disk_type);
+                    const isOpening = stageState?.status === "opening";
+                    const isDisabled = !resource.can_stage || isOpening;
+
+                    return (
+                      <tr className="group block align-top transition-colors hover:bg-white/60 sm:table-row" key={resourceKey}>
+                        <td className="relative block w-full px-3 py-4 sm:table-cell sm:w-[56%] sm:px-5">
+                          <div className="flex min-w-0 items-start gap-2 sm:gap-3">
+                            <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${TYPE_STYLES[resourceType]}`} aria-hidden="true">
+                              <ResourceIcon type={resourceType} />
                             </span>
-                          ))}
-                        </span>
-                      ) : null}
-                      <span className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:hidden">
-                        <span className={`rounded-md px-2 py-1 ${PROVIDER_STYLES[resourceProvider]}`}>
-                          {resourceProvider}
-                        </span>
-                        <span>{formatBytes(resource.size)}</span>
-                        {resource.shared_time ? <span>{resource.shared_time.slice(0, 10)}</span> : null}
-                      </span>
-                      {stageState?.status === "failed" ? (
-                        <span className="mt-3 block text-xs leading-5 text-red-600" role="alert">{stageState.error}</span>
-                      ) : !resource.can_stage ? (
-                        <span className="mt-3 block text-xs leading-5 text-amber-700">{resource.stage_message || "该资源类型暂不支持"}</span>
-                      ) : null}
-                    </span>
-                    <span className="hidden shrink-0 items-center gap-3 sm:flex">
-                      <span className="text-right text-xs text-muted-foreground">
-                        <span className={`inline-flex rounded-lg px-2.5 py-1 font-medium ${PROVIDER_STYLES[resourceProvider]}`}>
-                          {resourceProvider}
-                        </span>
-                        <span className="mt-2 block tabular-nums">
-                          {formatBytes(resource.size)}{resource.shared_time ? ` · ${resource.shared_time.slice(0, 10)}` : ""}
-                        </span>
-                      </span>
-                      <span className="flex size-11 items-center justify-center rounded-lg text-muted-foreground transition-colors group-hover:bg-blue-50 group-hover:text-primary">
-                        {isOpening ? (
-                          <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-                        ) : (
-                          <ChevronRight className="size-4" aria-hidden="true" />
-                        )}
-                      </span>
-                    </span>
-                  </article>
-                </button>
-              );
-            })}
+                            <div className="min-w-0 pr-20 sm:pr-0">
+                              <button
+                                className="block max-w-full text-left text-sm font-semibold leading-5 text-slate-800 transition-colors hover:text-primary focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:text-slate-500"
+                                type="button"
+                                aria-label={`进入${resource.disk_name}详情`}
+                                disabled={isDisabled}
+                                onClick={() => stageAndOpen(resource)}
+                              >
+                                <span className="line-clamp-2 [overflow-wrap:anywhere]">
+                                {resource.disk_name}
+                                </span>
+                              </button>
+                              {stageState?.status === "failed" ? (
+                                <p className="mt-2 text-xs leading-5 text-red-600" role="alert">{stageState.error}</p>
+                              ) : !resource.can_stage ? (
+                                <p className="mt-2 text-xs leading-5 text-amber-700">{resource.stage_message || "该资源类型暂不支持"}</p>
+                              ) : null}
+                            </div>
+                          </div>
+                          <span className={`absolute top-4 right-3 inline-flex whitespace-nowrap rounded-lg px-2 py-1.5 text-xs font-medium sm:hidden ${PROVIDER_STYLES[resourceProvider]}`}>
+                            {resourceProvider}
+                          </span>
+                        </td>
+                        <td className="block w-full px-3 py-0 pb-3 sm:table-cell sm:w-[20%] sm:px-5 sm:py-4">
+                          <div className="flex flex-col items-start gap-1.5">
+                            <span className="whitespace-nowrap text-sm tabular-nums text-slate-500">
+                              {resource.shared_time ? resource.shared_time.slice(0, 10) : "日期未知"}
+                            </span>
+                            <span className={`hidden whitespace-nowrap rounded-lg px-2 py-1.5 text-xs font-medium sm:inline-flex sm:px-3 ${PROVIDER_STYLES[resourceProvider]}`}>
+                              {resourceProvider}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="block w-full border-t border-slate-200/60 px-3 py-3 sm:table-cell sm:w-[24%] sm:border-t-0 sm:px-5 sm:py-4">
+                          <div className="flex justify-end gap-1 sm:sticky sm:right-0 sm:z-10 sm:bg-transparent sm:px-0 sm:py-0 sm:shadow-none">
+                            <Button
+                              className="h-8 min-w-0 rounded-lg bg-primary px-2 text-[11px] font-semibold text-white shadow-[0_5px_14px_rgb(67_171_232_/_0.25)] transition-transform hover:-translate-y-px hover:bg-primary/90 hover:shadow-[0_7px_18px_rgb(67_171_232_/_0.32)] sm:h-9 sm:min-w-[104px] sm:w-auto sm:rounded-xl sm:px-3 sm:text-xs"
+                              type="button"
+                              aria-label="获取链接"
+                              disabled={isDisabled}
+                              onClick={() => stageAndOpen(resource)}
+                            >
+                              {isOpening ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <Link2 className="size-3.5" aria-hidden="true" />}
+                              获取链接
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : (
           <div className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-border bg-card px-6 text-center shadow-[0_1px_6px_rgb(17_24_39_/_0.03)]">
@@ -449,24 +533,23 @@ export function SearchResults({
           </div>
         )}
 
-        {!isLoading && !searchError && totalPages > 1 ? (
-          <nav className="mt-6 flex items-center justify-between gap-4 border-t border-border pt-5" aria-label="搜索结果分页">
-            <Button className="h-11 px-4" variant="outline" type="button" disabled={initialPage <= 1 || isPending} onClick={() => changePage(initialPage - 1)}>
+      </main>
+
+      {!isLoading && !searchError && totalPages > 1 ? (
+        <nav className="fixed bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-2xl border border-white/90 bg-white/90 p-2 shadow-[0_12px_30px_rgb(15_23_42_/_0.16)] backdrop-blur-xl sm:bottom-5" aria-label="搜索结果分页">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Button className="h-9 rounded-xl px-3 text-xs sm:px-4" variant="outline" type="button" disabled={initialPage <= 1 || isPending} onClick={() => changePage(initialPage - 1)}>
               <ChevronLeft data-icon="inline-start" aria-hidden="true" />
               上一页
             </Button>
-            <span className="text-xs tabular-nums text-muted-foreground">第 {initialPage} / {totalPages} 页</span>
-            <Button className="h-11 px-4" variant="outline" type="button" disabled={initialPage >= totalPages || isPending} onClick={() => changePage(initialPage + 1)}>
+            <span className="min-w-[4.5rem] text-center text-xs tabular-nums text-muted-foreground">第 {initialPage} / {totalPages} 页</span>
+            <Button className="h-9 rounded-xl px-3 text-xs sm:px-4" variant="outline" type="button" disabled={initialPage >= totalPages || isPending} onClick={() => changePage(initialPage + 1)}>
               下一页
               <ChevronRight data-icon="inline-end" aria-hidden="true" />
             </Button>
-          </nav>
-        ) : null}
-      </main>
-
-      <footer className="px-5 py-5 text-center text-xs text-muted-foreground sm:px-8">
-        搜索结果由 melost.cn 提供 · 请尊重版权并遵守相关法律法规
-      </footer>
+          </div>
+        </nav>
+      ) : null}
     </div>
   );
 }

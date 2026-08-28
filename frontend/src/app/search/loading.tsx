@@ -1,6 +1,6 @@
 export default function SearchLoading() {
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-transparent text-foreground">
       <header className="border-b border-border bg-background">
         <div className="mx-auto flex h-18 max-w-5xl items-center gap-4 px-5 sm:px-8">
           <div className="size-8 rounded-lg bg-primary" />
