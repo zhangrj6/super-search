@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: url_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_PASSWORD: super-search-postgres-password
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,16 +19,13 @@ services:
       - internal
 
   backend:
-    image: super-search-urldb:melost
-    build:
-      context: ./backend
-      target: backend
+    image: ghcr.io/zhangrj6/super-search-backend:latest
     restart: unless-stopped
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: postgres
-      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      DB_PASSWORD: super-search-postgres-password
       DB_NAME: url_db
       PORT: 8080
       TIMEZONE: Asia/Shanghai
@@ -42,9 +39,7 @@ services:
       - internal
 
   frontend:
-    image: super-search-next:melost
-    build:
-      context: ./frontend
+    image: ghcr.io/zhangrj6/super-search-frontend:latest
     restart: unless-stopped
     environment:
       NODE_ENV: production
