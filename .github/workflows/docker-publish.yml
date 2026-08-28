@@ -3,14 +3,12 @@ name: Publish Docker Images
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*" ]
-  pull_request:
-    branches: [ "main" ]
 
 env:
   REGISTRY: ghcr.io
   BACKEND_IMAGE: ghcr.io/zhangrj6/super-search-backend
   FRONTEND_IMAGE: ghcr.io/zhangrj6/super-search-frontend
+  ADMIN_IMAGE: ghcr.io/zhangrj6/super-search-admin
 
 jobs:
   build-and-push:
@@ -28,48 +26,43 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Backend metadata
-        id: meta_backend
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.BACKEND_IMAGE }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=sha-
-            type=ref,event=tag
-
-      - name: Build and push backend image
+      - name: Build and push backend
         uses: docker/build-push-action@v6
         with:
           context: ./backend
           file: ./backend/Dockerfile
           target: backend
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta_backend.outputs.tags }}
-          labels: ${{ steps.meta_backend.outputs.labels }}
-
-      - name: Frontend metadata
-        id: meta_frontend
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.FRONTEND_IMAGE }}
+          push: true
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=sha-
-            type=ref,event=tag
+            ${{ env.BACKEND_IMAGE }}:latest
+            ${{ env.BACKEND_IMAGE }}:sha-${{ github.sha }}
 
-      - name: Build and push frontend image
+      - name: Build and push Next.js frontend
         uses: docker/build-push-action@v6
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta_frontend.outputs.tags }}
-          labels: ${{ steps.meta_frontend.outputs.labels }}
+          push: true
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:latest
+            ${{ env.FRONTEND_IMAGE }}:sha-${{ github.sha }}
+
+      - name: Build and push Nuxt admin
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          target: frontend
+          push: true
+          build-args: |
+            NUXT_PUBLIC_API_SERVER=http://backend:8080/api
+            NUXT_PUBLIC_API_CLIENT=/api
+          tags: |
+            ${{ env.ADMIN_IMAGE }}:latest
+            ${{ env.ADMIN_IMAGE }}:sha-${{ github.sha }}
