@@ -12,8 +12,8 @@ created only when a visitor requests it from the resource detail page.
 
 ## Search flow
 
-1. `POST /api/melost/search` searches melost.cn.
-2. Clicking a result calls `POST /api/melost/resources` and stores metadata only.
+1. `POST /api/search` searches melost.cn.
+2. Clicking a result calls `POST /api/resources/stage` and stores metadata only.
 3. The resource detail page reads the staged resource by its public key.
 4. `GET /api/resources/:id/link` transfers the resource and returns only the new
    share link.

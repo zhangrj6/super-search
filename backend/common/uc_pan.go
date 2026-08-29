@@ -53,12 +53,12 @@ func NewUCService(config *PanConfig) *UCService {
 		cookie = config.Cookie
 	}
 	service.SetHeaders(map[string]string{
-		"Accept":             "application/json, text/plain, */*",
-		"Accept-Language":    "zh-CN,zh;q=0.9",
-		"Content-Type":       "application/json;charset=UTF-8",
-		"Referer":            ucReferer,
-		"User-Agent":         ucUA,
-		"Cookie":             cookie,
+		"Accept":          "application/json, text/plain, */*",
+		"Accept-Language": "zh-CN,zh;q=0.9",
+		"Content-Type":    "application/json;charset=UTF-8",
+		"Referer":         ucReferer,
+		"User-Agent":      ucUA,
+		"Cookie":          cookie,
 	})
 
 	service.UpdateConfig(config)
@@ -159,8 +159,19 @@ func (u *UCService) Transfer(shareID string) (*TransferResult, error) {
 	title := shareResult.Share.Title
 
 	for _, item := range shareResult.List {
+		fileName := item.FileName
+		if fileName == "" {
+			fileName = item.Name
+		}
+		if fileName != "" && containsAdKeywords(fileName) {
+			utils.Debug("[UC] 源分享文件命中广告规则，跳过转存 fileName=%s", fileName)
+			continue
+		}
 		fidList = append(fidList, item.Fid)
 		fidTokenList = append(fidTokenList, item.ShareFidToken)
+	}
+	if len(fidList) == 0 {
+		return ErrorResult("分享内文件均被广告规则过滤"), nil
 	}
 
 	// 转存资源
@@ -184,9 +195,11 @@ func (u *UCService) Transfer(shareID string) (*TransferResult, error) {
 	}
 	utils.Debug("[UC] 转存完成 shareID=%s topFids=%v", shareID, myData.SaveAs.SaveAsTopFids)
 
-	// 删除广告文件（如果有配置）
-	if err := u.deleteAdFiles(myData.SaveAs.SaveAsTopFids[0]); err != nil {
-		utils.Debug("[UC] 删除广告文件失败（不阻断）fid=%s err=%v", myData.SaveAs.SaveAsTopFids[0], err)
+	// 删除广告文件（如果有配置）。遍历所有顶层目录，避免只清理第一个目录。
+	for _, topFID := range myData.SaveAs.SaveAsTopFids {
+		if err := u.deleteAdFiles(topFID); err != nil {
+			utils.Debug("[UC] 删除广告文件失败（不阻断）fid=%s err=%v", topFID, err)
+		}
 	}
 
 	// 添加个人自定义广告
@@ -194,8 +207,17 @@ func (u *UCService) Transfer(shareID string) (*TransferResult, error) {
 		utils.Debug("[UC] 添加广告文件失败（不阻断）fid=%s err=%v", myData.SaveAs.SaveAsTopFids[0], err)
 	}
 
+	promoFID, err := u.ensureTransferPromoFolder()
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("创建推广文件夹失败: %v", err)), nil
+	}
+	shareFIDs, err := appendPanFID(myData.SaveAs.SaveAsTopFids, promoFID)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("添加推广文件夹失败: %v", err)), nil
+	}
+
 	// 分享资源
-	shareBtnResult, err := u.getShareBtn(myData.SaveAs.SaveAsTopFids, title)
+	shareBtnResult, err := u.getShareBtn(shareFIDs, title)
 	if err != nil {
 		utils.Error("[UC] 创建再分享失败 shareID=%s err=%v", shareID, err)
 		return ErrorResult(fmt.Sprintf("分享失败: %v", err)), nil
@@ -221,7 +243,7 @@ func (u *UCService) Transfer(shareID string) (*TransferResult, error) {
 	if len(myData.SaveAs.SaveAsTopFids) > 1 {
 		fid = strings.Join(myData.SaveAs.SaveAsTopFids, ",")
 	} else {
-		fid = passwordResult.FirstFile.Fid
+		fid = myData.SaveAs.SaveAsTopFids[0]
 	}
 
 	utils.Info("[UC] 转存成功 shareID=%s newShareUrl=%s title=%s fid=%s", shareID, passwordResult.ShareURL, passwordResult.ShareTitle, fid)
@@ -235,7 +257,9 @@ func (u *UCService) Transfer(shareID string) (*TransferResult, error) {
 
 // Share 对系统已存文件按 fid 重新生成 UC 分享链接（实现 Sharer，FR-015）。
 // UC 与夸克同构，分享为异步任务，流程须与 Transfer 的分享段完全对齐：
-//   getShareBtn 创建任务 → waitForTask 轮询直到 Status==2 拿 share_id → getSharePassword 取最终 ShareURL。
+//
+//	getShareBtn 创建任务 → waitForTask 轮询直到 Status==2 拿 share_id → getSharePassword 取最终 ShareURL。
+//
 // 若像早期 quark Share 那样只看 share_id 非空就返回、跳过 getSharePassword，
 // 会拿到任务尚未完成时的未生效 share_id，导致链接打开是「已删除」状态。
 // 失败时由调用方（决策树）回退到「判原始→转存」，故此处失败是安全的降级。
@@ -243,7 +267,15 @@ func (u *UCService) Share(fid string) (*TransferResult, error) {
 	if fid == "" {
 		return &TransferResult{Success: false, Message: "fid 为空"}, nil
 	}
-	btn, err := u.getShareBtn([]string{fid}, "资源分享")
+	promoFID, err := u.ensureTransferPromoFolder()
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("创建推广文件夹失败: %v", err)}, nil
+	}
+	shareFIDs, err := appendPanFID(splitPanFIDs(fid), promoFID)
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("添加推广文件夹失败: %v", err)}, nil
+	}
+	btn, err := u.getShareBtn(shareFIDs, "资源分享")
 	if err != nil {
 		return &TransferResult{Success: false, Message: fmt.Sprintf("创建分享失败: %v", err)}, nil
 	}
@@ -332,10 +364,12 @@ func (u *UCService) DeleteFiles(fileList []string) (*TransferResult, error) {
 	}
 	utils.Debug("[UC] DeleteFiles count=%d fids=%v", len(fileList), fileList)
 
-	for _, fileID := range fileList {
-		if err := u.deleteSingleFile(fileID); err != nil {
-			utils.Error("[UC] 删除UC文件失败 fid=%s err=%v", fileID, err)
-			return ErrorResult(fmt.Sprintf("删除UC文件 %s 失败: %v", fileID, err)), nil
+	for _, value := range fileList {
+		for _, fileID := range splitPanFIDs(value) {
+			if err := u.deleteSingleFile(fileID); err != nil {
+				utils.Error("[UC] 删除UC文件失败 fid=%s err=%v", fileID, err)
+				return ErrorResult(fmt.Sprintf("删除UC文件 %s 失败: %v", fileID, err)), nil
+			}
 		}
 	}
 
@@ -422,19 +456,19 @@ func (u *UCService) getStoken(shareID string) (*UCStokenResult, error) {
 // getShare 获取分享详情
 func (u *UCService) getShare(shareID, stoken string) (*UCShareResult, error) {
 	queryParams := map[string]string{
-		"pr":             ucPR,
-		"fr":             "pc",
-		"uc_param_str":   "",
-		"pwd_id":         shareID,
-		"stoken":         stoken,
-		"pdir_fid":       "0",
-		"force":          "0",
-		"_page":          "1",
-		"_size":          "100",
-		"_fetch_banner":  "1",
-		"_fetch_share":   "1",
-		"_fetch_total":   "1",
-		"_sort":          "file_type:asc,updated_at:desc",
+		"pr":            ucPR,
+		"fr":            "pc",
+		"uc_param_str":  "",
+		"pwd_id":        shareID,
+		"stoken":        stoken,
+		"pdir_fid":      "0",
+		"force":         "0",
+		"_page":         "1",
+		"_size":         "100",
+		"_fetch_banner": "1",
+		"_fetch_share":  "1",
+		"_fetch_total":  "1",
+		"_sort":         "file_type:asc,updated_at:desc",
 	}
 
 	respData, err := u.HTTPGet(ucAPIBase+"/share/sharepage/detail", queryParams)
@@ -634,41 +668,48 @@ func (u *UCService) waitForTask(taskID string) (*UCTaskResult, error) {
 
 // getDirFile 获取指定文件夹的文件列表
 func (u *UCService) getDirFile(pdirFid string) ([]map[string]interface{}, error) {
-	queryParams := map[string]string{
-		"pr":              ucPR,
-		"fr":              "pc",
-		"uc_param_str":    "",
-		"pdir_fid":        pdirFid,
-		"_page":           "1",
-		"_size":           "50",
-		"_fetch_total":    "1",
-		"_fetch_sub_dirs": "0",
-		"_sort":           "updated_at:desc",
-	}
+	const pageSize = 50
+	var result []map[string]interface{}
+	for page := 1; page <= 200; page++ {
+		queryParams := map[string]string{
+			"pr":              ucPR,
+			"fr":              "pc",
+			"uc_param_str":    "",
+			"pdir_fid":        pdirFid,
+			"_page":           strconv.Itoa(page),
+			"_size":           strconv.Itoa(pageSize),
+			"_fetch_total":    "1",
+			"_fetch_sub_dirs": "0",
+			"_sort":           "updated_at:desc",
+		}
 
-	respData, err := u.HTTPGet(ucAPIBase+"/file/sort", queryParams)
-	if err != nil {
-		return nil, fmt.Errorf("请求失败: %v", err)
-	}
+		respData, err := u.HTTPGet(ucAPIBase+"/file/sort", queryParams)
+		if err != nil {
+			return nil, fmt.Errorf("请求失败: %v", err)
+		}
 
-	var response struct {
-		Status  int    `json:"status"`
-		Message string `json:"message"`
-		Data    struct {
-			List []map[string]interface{} `json:"list"`
-		} `json:"data"`
-	}
+		var response struct {
+			Status  int    `json:"status"`
+			Message string `json:"message"`
+			Data    struct {
+				List []map[string]interface{} `json:"list"`
+			} `json:"data"`
+		}
 
-	if err := json.Unmarshal(respData, &response); err != nil {
-		return nil, fmt.Errorf("解析响应失败: %v bodyHead=%s", err, headSnippet(respData))
-	}
+		if err := json.Unmarshal(respData, &response); err != nil {
+			return nil, fmt.Errorf("解析响应失败: %v bodyHead=%s", err, headSnippet(respData))
+		}
+		if response.Status != 200 {
+			return nil, fmt.Errorf("获取目录文件失败: status=%d msg=%s", response.Status, response.Message)
+		}
 
-	if response.Status != 200 {
-		return nil, fmt.Errorf("获取目录文件失败: status=%d msg=%s", response.Status, response.Message)
+		result = append(result, response.Data.List...)
+		if len(response.Data.List) < pageSize {
+			utils.Debug("[UC] getDirFile 成功 pdirFid=%s count=%d", pdirFid, len(result))
+			return result, nil
+		}
 	}
-
-	utils.Debug("[UC] getDirFile 成功 pdirFid=%s count=%d", pdirFid, len(response.Data.List))
-	return response.Data.List, nil
+	return nil, fmt.Errorf("UC目录文件超过分页上限: pdir_fid=%s", pdirFid)
 }
 
 // ============================================================================
@@ -677,6 +718,13 @@ func (u *UCService) getDirFile(pdirFid string) ([]map[string]interface{}, error)
 
 // deleteAdFiles 删除转存目录内命中广告关键词的文件
 func (u *UCService) deleteAdFiles(pdirFid string) error {
+	return u.deleteAdFilesRecursive(pdirFid, 0)
+}
+
+func (u *UCService) deleteAdFilesRecursive(pdirFid string, depth int) error {
+	if depth > 16 {
+		return fmt.Errorf("广告目录递归深度超过限制")
+	}
 	fileList, err := u.getDirFile(pdirFid)
 	if err != nil {
 		return err
@@ -690,10 +738,10 @@ func (u *UCService) deleteAdFiles(pdirFid string) error {
 	deleted := 0
 	for _, file := range fileList {
 		fileName, ok := file["file_name"].(string)
-		if !ok {
-			continue
+		if !ok || fileName == "" {
+			fileName, _ = file["name"].(string)
 		}
-		if containsAdKeywords(fileName) { // pan_ad.go 共享函数
+		if fileName != "" && containsAdKeywords(fileName) { // pan_ad.go 共享函数
 			if fid, ok := file["fid"].(string); ok {
 				utils.Debug("[UC] 命中广告关键词，删除 fileName=%s fid=%s", fileName, fid)
 				if _, err := u.DeleteFiles([]string{fid}); err != nil {
@@ -702,10 +750,69 @@ func (u *UCService) deleteAdFiles(pdirFid string) error {
 					deleted++
 				}
 			}
+			continue
+		}
+		if isPanDirectory(file) {
+			if fid, ok := file["fid"].(string); ok {
+				if err := u.deleteAdFilesRecursive(fid, depth+1); err != nil {
+					utils.Debug("[UC] 递归清理广告文件失败 fid=%s err=%v", fid, err)
+				}
+			}
 		}
 	}
 	utils.Debug("[UC] 广告清理完成 pdirFid=%s deleted=%d", pdirFid, deleted)
 	return nil
+}
+
+// ensureTransferPromoFolder 确保账号根目录存在固定推广文件夹，并返回其 FID。
+func (u *UCService) ensureTransferPromoFolder() (string, error) {
+	transferPromoFolderMu.Lock()
+	defer transferPromoFolderMu.Unlock()
+
+	files, err := u.getDirFile("0")
+	if err != nil {
+		return "", fmt.Errorf("检查UC根目录失败: %w", err)
+	}
+	for _, file := range files {
+		fileName, _ := file["file_name"].(string)
+		if fileName == "" {
+			fileName, _ = file["name"].(string)
+		}
+		if fileName == transferPromoFolderName && isPanDirectory(file) {
+			if fid, ok := file["fid"].(string); ok && fid != "" {
+				return fid, nil
+			}
+		}
+	}
+
+	data := map[string]interface{}{
+		"pdir_fid":      "0",
+		"file_name":     transferPromoFolderName,
+		"dir_path":      "",
+		"dir_init_lock": false,
+	}
+	respData, err := u.HTTPPost(ucAPIBase+"/file", data, u.ucCommonQuery())
+	if err != nil {
+		return "", fmt.Errorf("创建UC根目录推广文件夹失败: %w", err)
+	}
+	var response struct {
+		Status  int    `json:"status"`
+		Message string `json:"message"`
+		Data    struct {
+			Fid string `json:"fid"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &response); err != nil {
+		return "", fmt.Errorf("解析UC创建文件夹响应失败: %w", err)
+	}
+	if response.Status != 200 {
+		return "", fmt.Errorf("创建UC文件夹失败: status=%d message=%s", response.Status, response.Message)
+	}
+	if response.Data.Fid == "" {
+		return "", fmt.Errorf("创建UC文件夹成功但未返回 FID")
+	}
+	utils.Info("[UC] 已创建根目录推广文件夹 name=%s fid=%s", transferPromoFolderName, response.Data.Fid)
+	return response.Data.Fid, nil
 }
 
 // addAd 添加个人自定义广告到转存目录（随机选一条系统配置的广告）
@@ -852,6 +959,8 @@ type UCShareResult struct {
 	List []struct {
 		Fid           string `json:"fid"`
 		ShareFidToken string `json:"share_fid_token"`
+		FileName      string `json:"file_name"`
+		Name          string `json:"name"`
 	} `json:"list"`
 }
 

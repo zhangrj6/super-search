@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   }
 
   return forwardUrldbJson(
-    "/melost/search",
+    "/search",
     { method: "POST", body },
     "搜索服务暂时不可用，请稍后重试",
   );

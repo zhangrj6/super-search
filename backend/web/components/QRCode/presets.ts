@@ -36,7 +36,7 @@ const defaultPresetOptions = {
 export const plainPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Plain',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23000',
   dotsOptions: { color: '#000000', type: 'square' },
   cornersSquareOptions: { color: '#000000', type: 'square' },
@@ -48,7 +48,7 @@ export const plainPreset: Preset = {
 export const roundedPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Rounded',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23000',
   dotsOptions: { color: '#000000', type: 'rounded' },
   cornersSquareOptions: { color: '#000000', type: 'extra-rounded' },
@@ -60,7 +60,7 @@ export const roundedPreset: Preset = {
 export const colorfulPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Colorful',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%233B82F6',
   dotsOptions: { color: '#3B82F6', type: 'classy-rounded' },
   cornersSquareOptions: { color: '#EF4444', type: 'extra-rounded' },
@@ -72,7 +72,7 @@ export const colorfulPreset: Preset = {
 export const darkPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Dark',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23FFF',
   dotsOptions: { color: '#FFFFFF', type: 'classy' },
   cornersSquareOptions: { color: '#FFFFFF', type: 'square' },
@@ -84,7 +84,7 @@ export const darkPreset: Preset = {
 export const gradientPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Gradient',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%238B5CF6',
   dotsOptions: { color: '#8B5CF6', type: 'extra-rounded' },
   cornersSquareOptions: { color: '#EC4899', type: 'extra-rounded' },
@@ -96,7 +96,7 @@ export const gradientPreset: Preset = {
 export const minimalPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Minimal',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%236B7280',
   dotsOptions: { color: '#6B7280', type: 'dots' },
   cornersSquareOptions: { color: '#6B7280', type: 'dot' },
@@ -108,7 +108,7 @@ export const minimalPreset: Preset = {
 export const techPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Tech',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%2300D4FF',
   dotsOptions: { color: '#00D4FF', type: 'classy' },
   cornersSquareOptions: { color: '#00D4FF', type: 'square' },
@@ -121,7 +121,7 @@ export const techPreset: Preset = {
 export const transparentPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Transparent',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23374151',
   dotsOptions: { color: '#374151', type: 'dots' },
   cornersSquareOptions: { color: '#374151', type: 'dot' },
@@ -134,7 +134,7 @@ export const transparentPreset: Preset = {
 export const gradientModernPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Gradient Modern',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23667eea',
   dotsOptions: {
     type: 'rounded',
@@ -180,7 +180,7 @@ export const gradientModernPreset: Preset = {
 export const rainbowPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Rainbow',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23ff0000',
   dotsOptions: {
     type: 'dots',
@@ -233,7 +233,7 @@ export const rainbowPreset: Preset = {
 export const dynamicPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Dynamic',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23ee7752',
   dotsOptions: {
     type: 'rounded',
@@ -283,7 +283,7 @@ export const dynamicPreset: Preset = {
 export const glassPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Glass',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%231F2937',
   dotsOptions: { color: '#1F2937', type: 'dots' },
   cornersSquareOptions: { color: '#1F2937', type: 'dot' },
@@ -301,7 +301,7 @@ export const glassPreset: Preset = {
 export const neonPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Neon',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%2300FF88',
   dotsOptions: {
     type: 'square',
@@ -350,7 +350,7 @@ export const neonPreset: Preset = {
 export const naturePreset: Preset = {
   ...defaultPresetOptions,
   name: 'Nature',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23059669',
   dotsOptions: { color: '#059669', type: 'rounded' },
   cornersSquareOptions: { color: '#059669', type: 'extra-rounded' },
@@ -362,7 +362,7 @@ export const naturePreset: Preset = {
 export const warmPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Warm',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23DC2626',
   dotsOptions: { color: '#DC2626', type: 'classy-rounded' },
   cornersSquareOptions: { color: '#EA580C', type: 'extra-rounded' },
@@ -374,7 +374,7 @@ export const warmPreset: Preset = {
 export const coolPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Cool',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%231E40AF',
   dotsOptions: { color: '#1E40AF', type: 'extra-rounded' },
   cornersSquareOptions: { color: '#7C3AED', type: 'extra-rounded' },
@@ -387,7 +387,7 @@ export const coolPreset: Preset = {
 export const metallicPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Metallic',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23FFD700',
   dotsOptions: {
     type: 'rounded',
@@ -436,7 +436,7 @@ export const metallicPreset: Preset = {
 export const oceanPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Ocean',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%2300CED1',
   dotsOptions: {
     type: 'dots',
@@ -483,7 +483,7 @@ export const oceanPreset: Preset = {
 export const firePreset: Preset = {
   ...defaultPresetOptions,
   name: 'Fire',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23FF4500',
   dotsOptions: {
     type: 'classy-rounded',
@@ -531,7 +531,7 @@ export const firePreset: Preset = {
 export const padletPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Padlet',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%237ABE4A',
   dotsOptions: { color: '#7ABE4A', type: 'extra-rounded' },
   cornersSquareOptions: { color: '#ed457e', type: 'extra-rounded' },
@@ -544,7 +544,7 @@ export const padletPreset: Preset = {
 export const vercelDarkPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Vercel Dark',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:logo-vercel.svg?color=%23FFF',
   dotsOptions: { color: '#FFFFFF', type: 'classy' },
   cornersSquareOptions: { color: '#FFFFFF', type: 'square' },
@@ -557,7 +557,7 @@ export const vercelDarkPreset: Preset = {
 export const uiliciousPreset: Preset = {
   ...defaultPresetOptions,
   name: 'UIlicious',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23FF6B6B',
   dotsOptions: { color: '#FF6B6B', type: 'extra-rounded' },
   cornersSquareOptions: { color: '#FF6B6B', type: 'extra-rounded' },
@@ -569,7 +569,7 @@ export const uiliciousPreset: Preset = {
 export const viteConf2023Preset: Preset = {
   ...defaultPresetOptions,
   name: 'ViteConf 2023',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23646CFF',
   dotsOptions: { color: '#646CFF', type: 'classy-rounded' },
   cornersSquareOptions: { color: '#646CFF', type: 'square' },
@@ -581,7 +581,7 @@ export const viteConf2023Preset: Preset = {
 export const vueJsPreset: Preset = {
   ...defaultPresetOptions,
   name: 'Vue.js',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%2342D392',
   dotsOptions: { color: '#42D392', type: 'classy-rounded' },
   cornersSquareOptions: { color: '#42D392', type: 'square' },
@@ -594,7 +594,7 @@ export const vueJsPreset: Preset = {
 export const lyqhtPreset: Preset = {
   ...defaultPresetOptions,
   name: 'LYQHT',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23FF6B6B',
   dotsOptions: { color: '#FF6B6B', type: 'extra-rounded' },
   cornersSquareOptions: { color: '#FF6B6B', type: 'extra-rounded' },
@@ -606,7 +606,7 @@ export const lyqhtPreset: Preset = {
 export const pejuangKodePreset: Preset = {
   ...defaultPresetOptions,
   name: 'Pejuang Kode',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23252f3f',
   dotsOptions: { color: '#252f3f', type: 'classy-rounded' },
   cornersSquareOptions: { color: '#252f3f', type: 'dot' },
@@ -618,7 +618,7 @@ export const pejuangKodePreset: Preset = {
 export const geeksHackingPreset: Preset = {
   ...defaultPresetOptions,
   name: 'GeeksHacking',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23cebe2c',
   dotsOptions: { color: '#cebe2c', type: 'classy' },
   cornersSquareOptions: { color: '#ced043', type: 'dot' },
@@ -630,7 +630,7 @@ export const geeksHackingPreset: Preset = {
 export const spDigitalPreset: Preset = {
   ...defaultPresetOptions,
   name: 'SP Digital',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%232196b0',
   dotsOptions: { color: '#2196b0', type: 'extra-rounded' },
   cornersSquareOptions: { color: '#2196b0', type: 'dot' },
@@ -642,7 +642,7 @@ export const spDigitalPreset: Preset = {
 export const govtechStackCommunityPreset: Preset = {
   ...defaultPresetOptions,
   name: 'GovTech - Stack Community',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/ion:qr-code-outline.svg?color=%23000000',
   dotsOptions: { color: '#000000', type: 'square' },
   cornersSquareOptions: { color: '#000000', type: 'square' },
@@ -654,7 +654,7 @@ export const govtechStackCommunityPreset: Preset = {
 export const qqGroupPreset: Preset = {
   ...defaultPresetOptions,
   name: 'QQ Group',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/simple-icons:qq.svg?color=%2371cdfc',
   dotsOptions: { color: '#71cdfc', type: 'dots' },
   cornersSquareOptions: { color: '#71cdfc', type: 'dot' },
@@ -666,7 +666,7 @@ export const qqGroupPreset: Preset = {
 export const wechatGroupPreset: Preset = {
   ...defaultPresetOptions,
   name: 'WeChat Group',
-  data: 'https://pan.l9.lc',
+  data: 'https://52juyou.com',
   image: 'https://api.iconify.design/simple-icons:wechat.svg?color=%23000000',
   dotsOptions: { color: '#000000', type: 'rounded' },
   cornersSquareOptions: { color: '#000000', type: 'rounded' },

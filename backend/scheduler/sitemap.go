@@ -361,7 +361,7 @@ func (s *SitemapScheduler) submitSitemapToGoogle() error {
 	// 获取站点URL构建sitemap URL
 	siteURL, err := s.BaseScheduler.systemConfigRepo.GetConfigValue(entity.ConfigKeyWebsiteURL)
 	if err != nil || siteURL == "" || siteURL == "https://example.com" {
-		siteURL = "https://pan.l9.lc" // 默认站点URL
+		siteURL = "https://52juyou.com" // 默认站点URL
 	}
 
 	sitemapURL := siteURL

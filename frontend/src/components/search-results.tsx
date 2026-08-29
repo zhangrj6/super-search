@@ -33,6 +33,8 @@ import {
   PROVIDER_VALUES,
   providerFromDiskType,
   readApiData,
+  sanitizeResourceDisplayMessage,
+  sanitizeResourceDisplayText,
   type DriveProvider,
   type MelostSearchItem,
   type MelostSearchResponse,
@@ -72,27 +74,30 @@ function ResourceIcon({ type }: { type: ResourceType }) {
 
 function safeErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message.trim() : "";
-  return !message || /https?:\/\//i.test(message) ? fallback : message;
+  if (!message || /https?:\/\//i.test(message)) return fallback;
+  return sanitizeResourceDisplayMessage(message) || fallback;
 }
 
 type SearchResultsProps = {
   initialQuery: string;
   initialProvider: Provider;
   initialPage: number;
+  initialData: MelostSearchResponse | null;
 };
 
 export function SearchResults({
   initialQuery,
   initialProvider,
   initialPage,
+  initialData,
 }: SearchResultsProps) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState(initialQuery);
   const [provider, setProvider] = useState(initialProvider);
-  const [searchData, setSearchData] = useState<MelostSearchResponse | null>(null);
+  const [searchData, setSearchData] = useState<MelostSearchResponse | null>(initialData);
   const [searchError, setSearchError] = useState("");
-  const [isLoading, setIsLoading] = useState(Boolean(initialQuery));
+  const [isLoading, setIsLoading] = useState(Boolean(initialQuery && !initialData));
   const [reloadSequence, setReloadSequence] = useState(0);
   const [stageStates, setStageStates] = useState<Record<string, StageState>>({});
   const [dateSort, setDateSort] = useState<DateSort>("default");
@@ -105,12 +110,18 @@ export function SearchResults({
       return;
     }
 
+    if (initialData && reloadSequence === 0) {
+      setSearchData(initialData);
+      setIsLoading(false);
+      return;
+    }
+
     const controller = new AbortController();
     setIsLoading(true);
     setSearchError("");
     setStageStates({});
 
-    void fetch("/api/melost/search", {
+    void fetch("/api/search", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -133,7 +144,7 @@ export function SearchResults({
       });
 
     return () => controller.abort();
-  }, [initialPage, initialProvider, initialQuery, reloadSequence]);
+  }, [initialData, initialPage, initialProvider, initialQuery, reloadSequence]);
 
   function buildSearchUrl(nextQuery: string, nextProvider: Provider, nextPage = 1) {
     const params = new URLSearchParams({ q: nextQuery });
@@ -182,7 +193,7 @@ export function SearchResults({
   }
 
   async function stageResource(item: MelostSearchItem) {
-    const response = await fetch("/api/melost/resources", {
+    const response = await fetch("/api/resources/stage", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -458,6 +469,8 @@ export function SearchResults({
                     const stageState = stageStates[resourceKey];
                     const resourceType = inferResourceType(`${resource.disk_name} ${resource.files}`);
                     const resourceProvider = providerFromDiskType(resource.disk_type);
+                    const displayName = sanitizeResourceDisplayText(resource.disk_name) || "未命名资源";
+                    const stageMessage = sanitizeResourceDisplayMessage(resource.stage_message ?? "");
                     const isOpening = stageState?.status === "opening";
                     const isDisabled = !resource.can_stage || isOpening;
 
@@ -472,18 +485,18 @@ export function SearchResults({
                               <button
                                 className="block max-w-full text-left text-sm font-semibold leading-5 text-slate-800 transition-colors hover:text-primary focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:text-slate-500"
                                 type="button"
-                                aria-label={`进入${resource.disk_name}详情`}
+                                aria-label={`进入${displayName}详情`}
                                 disabled={isDisabled}
                                 onClick={() => stageAndOpen(resource)}
                               >
                                 <span className="line-clamp-2 [overflow-wrap:anywhere]">
-                                {resource.disk_name}
+                                {displayName}
                                 </span>
                               </button>
                               {stageState?.status === "failed" ? (
                                 <p className="mt-2 text-xs leading-5 text-red-600" role="alert">{stageState.error}</p>
                               ) : !resource.can_stage ? (
-                                <p className="mt-2 text-xs leading-5 text-amber-700">{resource.stage_message || "该资源类型暂不支持"}</p>
+                                <p className="mt-2 text-xs leading-5 text-amber-700">{stageMessage || "该资源类型暂不支持"}</p>
                               ) : null}
                             </div>
                           </div>

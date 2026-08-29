@@ -26,6 +26,7 @@ import {
   providerFromResource,
   readApiData,
   resourceTagNames,
+  sanitizeResourceDisplayText,
   type DriveProvider,
   type ResourceLinkResponse,
   type ResourceType,
@@ -105,6 +106,8 @@ export function ResourceDetail({ resource, backHref }: ResourceDetailProps) {
   const provider = providerFromResource(resource);
   const resourceType = inferResourceType(`${resource.title} ${resource.description}`);
   const uploadedAt = formatResourceDate(resource.created_at);
+  const displayTitle = sanitizeResourceDisplayText(resource.title) || "未命名资源";
+  const displayDescription = sanitizeResourceDisplayText(resource.description);
   const keywords = resourceTagNames(resource);
 
   useEffect(() => {
@@ -118,8 +121,8 @@ export function ResourceDetail({ resource, backHref }: ResourceDetailProps) {
     try {
       if (navigator.share) {
         await navigator.share({
-          title: resource.title,
-          text: resource.description || resource.title,
+          title: displayTitle,
+          text: displayDescription || displayTitle,
           url: window.location.href,
         });
       } else if (!(await writeClipboard(window.location.href))) {
@@ -212,7 +215,7 @@ export function ResourceDetail({ resource, backHref }: ResourceDetailProps) {
                   <ResourceIcon type={resourceType} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h1 className="text-lg leading-7 font-semibold break-words sm:text-xl">{resource.title}</h1>
+                  <h1 className="text-lg leading-7 font-semibold break-words sm:text-xl">{displayTitle}</h1>
                   <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground sm:text-sm">
                     <span className="flex items-center gap-1.5">
                       <CalendarDays className="size-3.5" aria-hidden="true" />
@@ -249,7 +252,7 @@ export function ResourceDetail({ resource, backHref }: ResourceDetailProps) {
                     ) : (
                       <ExternalLink data-icon="inline-start" aria-hidden="true" />
                     )}
-                    {transferStatus === "loading" ? "正在转存" : transferStatus === "error" ? "重新获取" : "获取链接"}
+                    {transferStatus === "loading" ? "正在获取链接" : transferStatus === "error" ? "重新获取" : "获取链接"}
                   </Button>
                 )}
                 <Button className="h-11 rounded-xl px-4" variant="outline" type="button" onClick={sharePage}>
@@ -277,7 +280,7 @@ export function ResourceDetail({ resource, backHref }: ResourceDetailProps) {
               ) : transferStatus === "error" ? (
                 <div className="mt-5 flex gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700" role="alert">
                   <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-                  <p className="text-xs leading-6">转存失败，请稍后重试。</p>
+                  <p className="text-xs leading-6">获取链接失败，请稍后重试。</p>
                 </div>
               ) : null}
 
@@ -289,7 +292,7 @@ export function ResourceDetail({ resource, backHref }: ResourceDetailProps) {
             <section className="rounded-2xl border border-border bg-card p-5 shadow-[0_1px_6px_rgb(17_24_39_/_0.03)] sm:p-6">
               <h2 className="text-sm font-semibold">资源描述</h2>
               <p className="mt-3 whitespace-pre-line text-sm leading-7 break-words text-muted-foreground">
-                {resource.description || "暂无资源描述。"}
+                {displayDescription || "暂无资源描述。"}
               </p>
             </section>
 
@@ -297,7 +300,7 @@ export function ResourceDetail({ resource, backHref }: ResourceDetailProps) {
               <h2 className="text-sm font-semibold">详细信息</h2>
               <dl className="mt-4">
                 {[
-                  { label: "资源名称", value: resource.title },
+                  { label: "资源名称", value: displayTitle },
                   { label: "资源类型", value: resourceType },
                   { label: "来源网盘", value: provider },
                   { label: "收录日期", value: uploadedAt, mono: true },

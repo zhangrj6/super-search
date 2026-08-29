@@ -26,7 +26,7 @@ export async function GET(
     const upstream = await fetchUrldb(`/resources/${id}/link`);
     if (!upstream.ok) {
       return Response.json(
-        { success: false, message: "转存失败，请稍后重试", data: null, code: 502 },
+        { success: false, message: "获取链接失败，请稍后重试", data: null, code: 502 },
         { status: 502, headers: { "cache-control": "no-store" } },
       );
     }
@@ -34,7 +34,7 @@ export async function GET(
     const payload = (await upstream.json()) as ApiEnvelope<ResourceLinkResponse>;
     if (!payload.success || !isSafeTransferredLink(payload.data)) {
       return Response.json(
-        { success: false, message: "转存失败，请稍后重试", data: null, code: 502 },
+        { success: false, message: "获取链接失败，请稍后重试", data: null, code: 502 },
         { status: 502, headers: { "cache-control": "no-store" } },
       );
     }
@@ -56,7 +56,7 @@ export async function GET(
     );
   } catch {
     return Response.json(
-      { success: false, message: "转存失败，请稍后重试", data: null, code: 502 },
+      { success: false, message: "获取链接失败，请稍后重试", data: null, code: 502 },
       { status: 502, headers: { "cache-control": "no-store" } },
     );
   }

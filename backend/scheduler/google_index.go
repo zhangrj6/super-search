@@ -146,7 +146,7 @@ func (s *GoogleIndexScheduler) initGoogleClient() error {
 	// 获取站点URL，使用通用站点URL配置
 	siteURL, err := s.systemConfigRepo.GetConfigValue(entity.ConfigKeyWebsiteURL)
 	if err != nil || siteURL == "" || siteURL == "https://example.com" {
-		siteURL = "https://pan.l9.lc" // 默认站点URL
+		siteURL = "https://52juyou.com" // 默认站点URL
 	}
 
 	// 创建Google客户端配置
@@ -207,7 +207,7 @@ func (s *GoogleIndexScheduler) submitSitemapToGoogle(ctx context.Context) error 
 	// 获取站点URL构建sitemap URL
 	siteURL, err := s.systemConfigRepo.GetConfigValue(entity.ConfigKeyWebsiteURL)
 	if err != nil || siteURL == "" || siteURL == "https://example.com" {
-		siteURL = "https://pan.l9.lc" // 默认站点URL
+		siteURL = "https://52juyou.com" // 默认站点URL
 	}
 
 	sitemapURL := siteURL
@@ -262,7 +262,7 @@ func (s *GoogleIndexScheduler) scanAndSubmitUnindexedURLs(ctx context.Context) e
 			// 构建本站URL，而不是使用原始的外链URL
 			siteURL, _ := s.systemConfigRepo.GetConfigValue(entity.ConfigKeyWebsiteURL)
 			if siteURL == "" {
-				siteURL = "https://pan.l9.lc" // 默认站点URL
+				siteURL = "https://52juyou.com" // 默认站点URL
 			}
 			localURL := fmt.Sprintf("%s/r/%s", siteURL, resource.Key)
 

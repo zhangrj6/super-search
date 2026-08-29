@@ -25,7 +25,7 @@
 
 <div align="center">
 
-  🌐 [在线演示](https://pan.l9.lc) | 📖 [文档](https://ecn5khs4t956.feishu.cn/wiki/PsnDwtxghiP0mLkTiruczKtxnwd?from=from_copylink) | 🐛 [问题反馈](https://github.com/ctwj/urldb/issues) | ⭐ [给个星标](https://github.com/ctwj/urldb)
+  🌐 [在线演示](https://52juyou.com) | 📖 [文档](https://ecn5khs4t956.feishu.cn/wiki/PsnDwtxghiP0mLkTiruczKtxnwd?from=from_copylink) | 🐛 [问题反馈](https://github.com/ctwj/urldb/issues) | ⭐ [给个星标](https://github.com/ctwj/urldb)
   
 ### 支持的网盘平台
 

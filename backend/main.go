@@ -379,8 +379,8 @@ func main() {
 
 		// 搜索
 		api.GET("/search", handlers.SearchResources)
-		api.POST("/melost/search", melostHandler.Search)
-		api.POST("/melost/resources", melostHandler.StageResource)
+		api.POST("/search", melostHandler.Search)
+		api.POST("/resources/stage", melostHandler.StageResource)
 
 		// 统计
 		api.GET("/stats", handlers.GetStats)

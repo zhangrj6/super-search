@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	pathpkg "path"
 	"strconv"
 	"strings"
 	"time"
@@ -290,21 +291,192 @@ func (b *BaiduPanService) createShare(fsIDs []int64, period, pwd, bdstoken strin
 	return shareURL, nil
 }
 
+func (b *BaiduPanService) listDir(dir, bdstoken string) ([]map[string]any, error) {
+	const pageSize = 1000
+	var result []map[string]any
+	for page := 1; page <= 200; page++ {
+		data, err := b.HTTPGet(baiduPanBaseURL+"/api/list", map[string]string{
+			"order": "name", "desc": "0", "showempty": "0", "web": "1",
+			"page": strconv.Itoa(page), "num": strconv.Itoa(pageSize), "dir": dir,
+			"bdstoken": bdstoken,
+		})
+		if err != nil {
+			return nil, err
+		}
+		errno, response, err := parseBaiduErrno(data)
+		if err != nil {
+			return nil, err
+		}
+		if errno != 0 {
+			return nil, fmt.Errorf("列出目录失败: %s", ErrnoMessage(errno))
+		}
+		list, _ := response["list"].([]any)
+		for _, item := range list {
+			if file, ok := item.(map[string]any); ok {
+				result = append(result, file)
+			}
+		}
+		if len(list) < pageSize {
+			return result, nil
+		}
+	}
+	return nil, fmt.Errorf("百度目录超过分页上限: %s", dir)
+}
+
+// ensureTransferPromoFolder 确保百度账号根目录存在固定推广文件夹。
+func (b *BaiduPanService) ensureTransferPromoFolder(bdstoken string) (int64, error) {
+	transferPromoFolderMu.Lock()
+	defer transferPromoFolderMu.Unlock()
+
+	findExisting := func() (int64, error) {
+		files, err := b.listDir("/", bdstoken)
+		if err != nil {
+			return 0, err
+		}
+		for _, file := range files {
+			name, _ := file["server_filename"].(string)
+			if name == transferPromoFolderName && toInt64(file["isdir"]) == 1 {
+				if fsID := toInt64(file["fs_id"]); fsID != 0 {
+					return fsID, nil
+				}
+			}
+		}
+		return 0, nil
+	}
+	if fsID, err := findExisting(); err != nil {
+		return 0, fmt.Errorf("检查百度根目录失败: %w", err)
+	} else if fsID != 0 {
+		return fsID, nil
+	}
+
+	form := url.Values{}
+	form.Set("path", "/"+transferPromoFolderName)
+	form.Set("isdir", "1")
+	form.Set("block_list", "[]")
+	data, err := b.HTTPPostForm(baiduPanBaseURL+"/api/create", form.Encode(), map[string]string{
+		"a": "commit", "bdstoken": bdstoken, "channel": "chunlei",
+		"web": "1", "app_id": "250528", "clienttype": "0",
+	})
+	if err == nil {
+		errno, response, parseErr := parseBaiduErrno(data)
+		if parseErr == nil && errno == 0 {
+			if fsID := toInt64(response["fs_id"]); fsID != 0 {
+				log.Printf("[baidu] 已创建根目录推广文件夹 name=%s fs_id=%d", transferPromoFolderName, fsID)
+				return fsID, nil
+			}
+		}
+		if parseErr != nil {
+			err = parseErr
+		} else if errno != 0 {
+			err = fmt.Errorf("%s", ErrnoMessage(errno))
+		}
+	}
+	// 同名冲突或并发创建时重新查询。
+	if fsID, findErr := findExisting(); findErr == nil && fsID != 0 {
+		return fsID, nil
+	}
+	return 0, fmt.Errorf("创建百度推广文件夹失败: %v", err)
+}
+
+func (b *BaiduPanService) resolveStoredShareFSIDs(fid, bdstoken string) ([]int64, error) {
+	var result []int64
+	seen := make(map[int64]struct{})
+	dirCache := make(map[string][]map[string]any)
+	for _, value := range splitBaiduStoredValues(fid) {
+		if fsID, err := strconv.ParseInt(value, 10, 64); err == nil && fsID != 0 {
+			if _, ok := seen[fsID]; !ok {
+				seen[fsID] = struct{}{}
+				result = append(result, fsID)
+			}
+			continue
+		}
+		dir := pathpkg.Dir(value)
+		files, ok := dirCache[dir]
+		if !ok {
+			var err error
+			files, err = b.listDir(dir, bdstoken)
+			if err != nil {
+				return nil, err
+			}
+			dirCache[dir] = files
+		}
+		found := int64(0)
+		for _, file := range files {
+			filePath, _ := file["path"].(string)
+			name, _ := file["server_filename"].(string)
+			if filePath == value || (filePath == "" && name == pathpkg.Base(value)) {
+				found = toInt64(file["fs_id"])
+				break
+			}
+		}
+		if found == 0 {
+			return nil, fmt.Errorf("未找到已转存文件: %s", value)
+		}
+		if _, ok := seen[found]; !ok {
+			seen[found] = struct{}{}
+			result = append(result, found)
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("fid 为空")
+	}
+	return result, nil
+}
+
+// splitBaiduStoredValues 兼容数字 fs_id 以及逗号拼接的绝对路径。
+// 路径分隔符只认 ",/"，避免把文件名自身的英文逗号误拆开。
+func splitBaiduStoredValues(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if !strings.HasPrefix(value, "/") {
+		return splitPanFIDs(value)
+	}
+	parts := strings.Split(value, ",/")
+	result := make([]string, 0, len(parts))
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if i > 0 {
+			part = "/" + part
+		}
+		result = append(result, part)
+	}
+	return result
+}
+
 // Share 对系统已存文件按 fid 重新生成百度分享链接（实现 Sharer，FR-015）。
 // fid 即百度 fs_id（int64，存为字符串）；period=1 永久分享。失败时由调用方回退到「判原始→转存」。
 func (b *BaiduPanService) Share(fid string) (*TransferResult, error) {
-	if fid == "" {
+	if strings.TrimSpace(fid) == "" {
 		return &TransferResult{Success: false, Message: "fid 为空"}, nil
-	}
-	fsID, err := strconv.ParseInt(fid, 10, 64)
-	if err != nil {
-		return &TransferResult{Success: false, Message: fmt.Sprintf("fid 非法: %v", err)}, nil
 	}
 	bdstoken, err := b.getBdstoken()
 	if err != nil {
 		return &TransferResult{Success: false, Message: fmt.Sprintf("获取 bdstoken 失败: %v", err)}, nil
 	}
-	shareURL, err := b.createShare([]int64{fsID}, "1", "", bdstoken)
+	fsIDs, err := b.resolveStoredShareFSIDs(fid, bdstoken)
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("解析已转存文件失败: %v", err)}, nil
+	}
+	promoFSID, err := b.ensureTransferPromoFolder(bdstoken)
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("创建推广文件夹失败: %v", err)}, nil
+	}
+	promoExists := false
+	for _, fsID := range fsIDs {
+		if fsID == promoFSID {
+			promoExists = true
+			break
+		}
+	}
+	if !promoExists {
+		fsIDs = append(fsIDs, promoFSID)
+	}
+	shareURL, err := b.createShare(fsIDs, "0", "", bdstoken)
 	if err != nil {
 		return &TransferResult{Success: false, Message: fmt.Sprintf("创建分享失败: %v", err)}, nil
 	}
@@ -521,18 +693,33 @@ func (b *BaiduPanService) Transfer(shareID string) (*TransferResult, error) {
 
 	// 5b. IsType==0：真转存 + 重新分享
 	fsIDs := make([]int64, 0, len(files))
+	filteredFiles := make([]baiduShareFile, 0, len(files))
 	for _, f := range files {
+		if f.ServerName != "" && containsAdKeywords(f.ServerName) {
+			log.Printf("[baidu] 源分享文件命中广告规则，跳过转存: %s", f.ServerName)
+			continue
+		}
+		filteredFiles = append(filteredFiles, f)
 		fsIDs = append(fsIDs, f.FsID)
 	}
+	if len(fsIDs) == 0 {
+		return ErrorResult("分享内文件均被广告规则过滤"), nil
+	}
+	title = filteredFiles[0].ServerName
 
-	toFsIDs, err := b.transferFile(files[0].ShareID, files[0].UK, bdstoken, baiduTransferDir, fsIDs)
+	toFsIDs, err := b.transferFile(filteredFiles[0].ShareID, filteredFiles[0].UK, bdstoken, baiduTransferDir, fsIDs)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("转存失败: %v", err)), nil
 	}
 
 	// 有效期：统一永久（period=0）
 	period := "0"
-	shareURL, err := b.createShare(toFsIDs, period, code, bdstoken)
+	promoFSID, err := b.ensureTransferPromoFolder(bdstoken)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("创建推广文件夹失败: %v", err)), nil
+	}
+	shareFSIDs := append(append([]int64(nil), toFsIDs...), promoFSID)
+	shareURL, err := b.createShare(shareFSIDs, period, code, bdstoken)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("转存成功但创建分享失败: %v", err)), nil
 	}
@@ -541,8 +728,8 @@ func (b *BaiduPanService) Transfer(shareID string) (*TransferResult, error) {
 	// 关键：必须带上 baiduTransferDir 前缀，否则 cleanup 删除时路径错位；
 	// 且根目录删除会触发 errno=132 风控，所以一定要落在子目录里。
 	// 多文件用逗号连接。
-	pathParts := make([]string, 0, len(files))
-	for _, f := range files {
+	pathParts := make([]string, 0, len(filteredFiles))
+	for _, f := range filteredFiles {
 		pathParts = append(pathParts, baiduTransferDir+"/"+f.ServerName)
 	}
 	fid := strings.Join(pathParts, ",")
@@ -563,7 +750,7 @@ func (b *BaiduPanService) DeleteFiles(fileList []string) (*TransferResult, error
 	// fileList 元素可能是逗号连接的多路径（与 Transfer 存储一致）
 	var paths []string
 	for _, item := range fileList {
-		for _, p := range strings.Split(item, ",") {
+		for _, p := range splitBaiduStoredValues(item) {
 			p = strings.TrimSpace(p)
 			if p != "" {
 				paths = append(paths, p)
@@ -622,8 +809,8 @@ func (b *BaiduPanService) GetFiles(pdirFid string) (*TransferResult, error) {
 // GetUserInfo 获取用户信息
 //
 // 百度网盘网页版的用户信息分散在两个 API：
-//   1. /api/gettemplatevariable —— 仅返回 username / uk / vip_type（不含容量）
-//   2. /api/quota               —— 返回 total / used（字节数，int64）
+//  1. /api/gettemplatevariable —— 仅返回 username / uk / vip_type（不含容量）
+//  2. /api/quota               —— 返回 total / used（字节数，int64）
 //
 // 历史代码试图用单个 API 拿全部字段（fields 里塞 total_capacity/used_capacity），
 // 但百度会静默忽略不支持的 field，导致容量恒为 0。这里改成两次请求组合。

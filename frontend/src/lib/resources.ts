@@ -161,9 +161,25 @@ export function formatResourceDate(value: string) {
   }).format(date);
 }
 
+/** Remove known upstream advertising labels from user-visible resource text. */
+export function sanitizeResourceDisplayText(value: string) {
+  return value
+    .replace(/影盘社/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function sanitizeResourceDisplayMessage(value: string) {
+  return sanitizeResourceDisplayText(value)
+    .replace(/转存/g, "获取链接")
+    .trim();
+}
+
 export function resourceTagNames(resource: UrldbResource) {
   return (resource.tags ?? [])
     .map((tag) => tag.name?.trim() ?? "")
+    .map(sanitizeResourceDisplayText)
     .filter(Boolean)
     .slice(0, 6);
 }

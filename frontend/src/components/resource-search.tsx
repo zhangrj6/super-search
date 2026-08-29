@@ -79,7 +79,14 @@ export function ResourceSearch() {
             </span>
           </a>
 
-          <form className="w-full max-w-2xl" onSubmit={handleSubmit}>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-800 sm:text-3xl">
+            聚优盘网盘资源搜索
+          </h1>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500 sm:text-base">
+            搜索百度网盘、夸克网盘、阿里云盘、迅雷云盘和 UC 网盘中的影视、课程、教程与文档资源。
+          </p>
+
+          <form className="mt-7 w-full max-w-2xl sm:mt-8" action="/search" method="get" onSubmit={handleSubmit}>
             <label className="sr-only" htmlFor="resource-query">
               搜索文件名或资源关键词
             </label>
@@ -92,6 +99,7 @@ export function ResourceSearch() {
               <Input
                 ref={inputRef}
                 id="resource-query"
+                name="q"
                 className="h-12 min-w-0 flex-1 border-0 bg-transparent px-0 text-base text-slate-800 shadow-none placeholder:text-slate-400 focus-visible:border-0 focus-visible:ring-0 md:text-base"
                 type="text"
                 value={query}

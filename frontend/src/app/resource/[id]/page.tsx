@@ -2,21 +2,25 @@ import { AlertCircle } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { cache } from "react";
+import { JsonLd } from "@/components/json-ld";
 import { ResourceDetail } from "@/components/resource-detail";
 import { Button } from "@/components/ui/button";
 import {
+  resourceTagNames,
+  sanitizeResourceDisplayText,
   type ApiEnvelope,
   isProvider,
   type Provider,
   type ResourceGroupResponse,
   type UrldbResource,
 } from "@/lib/resources";
+import {
+  absoluteUrl,
+  SITE_NAME,
+  truncateMetaText,
+} from "@/lib/seo";
 import { fetchUrldb } from "@/lib/urldb-server";
-
-export const metadata: Metadata = {
-  title: "资源详情 - 聚优盘",
-  description: "查看网盘资源详情并获取新的分享链接。",
-};
 
 type ResourcePageProps = {
   params: Promise<{ id: string }>;
@@ -27,7 +31,7 @@ function firstValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-async function loadResource(key: string) {
+const loadResource = cache(async (key: string) => {
   try {
     const response = await fetchUrldb(`/resources/key/${encodeURIComponent(key)}`);
     if (response.status === 404) return { status: "not-found" as const };
@@ -47,6 +51,67 @@ async function loadResource(key: string) {
   } catch {
     return { status: "unavailable" as const };
   }
+});
+
+export async function generateMetadata({ params }: ResourcePageProps): Promise<Metadata> {
+  const { id: key } = await params;
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(key)) {
+    return {
+      title: "资源不存在",
+      robots: { index: false, follow: false },
+    };
+  }
+
+  const result = await loadResource(key);
+  if (result.status !== "ready") {
+    return {
+      title: result.status === "not-found" ? "资源不存在" : "资源详情暂时不可用",
+      description: "聚优盘网盘资源详情页面。",
+      robots: { index: false, follow: false },
+    };
+  }
+
+  const resourceTitle = truncateMetaText(
+    sanitizeResourceDisplayText(result.resource.title) || "网盘资源",
+    72,
+  );
+  const resourceDescription = truncateMetaText(
+    sanitizeResourceDisplayText(result.resource.description) ||
+      `在聚优盘查看${resourceTitle}相关的网盘资源信息。`,
+  );
+  const canonicalPath = `/resource/${encodeURIComponent(key)}`;
+  const title = `${resourceTitle}｜网盘资源｜${SITE_NAME}`;
+
+  return {
+    title,
+    description: resourceDescription,
+    alternates: { canonical: canonicalPath },
+    robots: {
+      index: true,
+      follow: true,
+      googleBot: {
+        index: true,
+        follow: true,
+        "max-image-preview": "large",
+        "max-snippet": -1,
+        "max-video-preview": -1,
+      },
+    },
+    openGraph: {
+      type: "article",
+      url: absoluteUrl(canonicalPath),
+      siteName: SITE_NAME,
+      title,
+      description: resourceDescription,
+      publishedTime: result.resource.created_at,
+      modifiedTime: result.resource.updated_at,
+    },
+    twitter: {
+      card: "summary",
+      title,
+      description: resourceDescription,
+    },
+  };
 }
 
 function ResourceUnavailable({ backHref }: { backHref: string }) {
@@ -89,5 +154,32 @@ export default async function ResourcePage({ params, searchParams }: ResourcePag
   if (result.status === "not-found") notFound();
   if (result.status === "unavailable") return <ResourceUnavailable backHref={backHref} />;
 
-  return <ResourceDetail resource={result.resource} backHref={backHref} />;
+  const displayTitle = sanitizeResourceDisplayText(result.resource.title) || "网盘资源";
+  const displayDescription = sanitizeResourceDisplayText(result.resource.description);
+  const canonicalUrl = absoluteUrl(`/resource/${encodeURIComponent(key)}`);
+  const resourceJsonLd: Record<string, unknown> = {
+    "@context": "https://schema.org",
+    "@type": "CreativeWork",
+    name: displayTitle,
+    description: displayDescription || `在${SITE_NAME}查看${displayTitle}相关的网盘资源信息。`,
+    url: canonicalUrl,
+    mainEntityOfPage: canonicalUrl,
+    inLanguage: "zh-CN",
+    isAccessibleForFree: true,
+    datePublished: result.resource.created_at,
+    dateModified: result.resource.updated_at,
+    keywords: resourceTagNames(result.resource),
+    publisher: {
+      "@type": "Organization",
+      name: SITE_NAME,
+      url: absoluteUrl("/"),
+    },
+  };
+
+  return (
+    <>
+      <JsonLd data={resourceJsonLd} />
+      <ResourceDetail resource={result.resource} backHref={backHref} />
+    </>
+  );
 }

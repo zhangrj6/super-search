@@ -1,3 +1,6 @@
+# 基础镜像可在受限网络环境中通过 build-arg 切换镜像源。
+ARG ALPINE_IMAGE=alpine:latest
+
 # 前端构建阶段
 FROM node:20-slim AS frontend-builder
 
@@ -25,6 +28,8 @@ CMD ["node", ".output/server/index.mjs"]
 FROM golang:1.24.5-alpine AS backend-builder
 
 WORKDIR /app
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -50,7 +55,7 @@ RUN VERSION=${VERSION:-$(cat VERSION)} && \
     -o main .
 
 # 后端运行阶段
-FROM alpine:latest AS backend
+FROM ${ALPINE_IMAGE} AS backend
 
 # 安装时区数据
 RUN apk add --no-cache tzdata

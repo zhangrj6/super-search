@@ -438,10 +438,29 @@ func (x *XunleiPanService) Transfer(shareID string) (*TransferResult, error) {
 	// }
 
 	// 处理广告过滤（这里简化处理）
-	// TODO: 添加广告文件过滤逻辑
+	sourceFileIDs := make([]string, 0)
+	if files, ok := shareDetail["files"].([]interface{}); ok {
+		for _, file := range files {
+			fileMap, ok := file.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			name, _ := fileMap["name"].(string)
+			if name != "" && containsAdKeywords(name) {
+				log.Printf("[xunlei] 源分享文件命中广告规则，跳过转存: %s", name)
+				continue
+			}
+			if id, ok := fileMap["id"].(string); ok && id != "" {
+				sourceFileIDs = append(sourceFileIDs, id)
+			}
+		}
+	}
+	if len(sourceFileIDs) == 0 {
+		return ErrorResult("分享内文件均被广告规则过滤"), nil
+	}
 
 	// 转存资源
-	restoreResult, err := x.getRestore(shareID, shareDetail, accessToken, captchaToken, parent_id)
+	restoreResult, err := x.getRestore(shareID, shareDetail, sourceFileIDs, accessToken, captchaToken, parent_id)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("转存失败: %v", err)), nil
 	}
@@ -495,6 +514,9 @@ func (x *XunleiPanService) Transfer(shareID string) (*TransferResult, error) {
 		}
 	}
 	log.Printf("迅雷转存 file_ids 提取结果: %v (taskResp params: %+v)", existingFileIds, taskResp["params"])
+	if len(existingFileIds) == 0 {
+		return ErrorResult("转存完成但未获取到文件标识"), nil
+	}
 
 	// 创建分享链接
 	expirationDays := "-1"
@@ -503,7 +525,15 @@ func (x *XunleiPanService) Transfer(shareID string) (*TransferResult, error) {
 	}
 
 	// 根据share_id获取到分享链接
-	shareResult, err := x.getSharePassword(existingFileIds, accessToken, captchaToken, expirationDays)
+	promoFID, err := x.ensureTransferPromoFolder(accessToken, captchaToken)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("创建推广文件夹失败: %v", err)), nil
+	}
+	shareFileIDs, err := appendPanFID(existingFileIds, promoFID)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("添加推广文件夹失败: %v", err)), nil
+	}
+	shareResult, err := x.getSharePassword(shareFileIDs, accessToken, captchaToken, expirationDays)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("创建分享链接失败: %v", err)), nil
 	}
@@ -592,18 +622,7 @@ func (x *XunleiPanService) getShare(shareID, passCode, accessToken, captchaToken
 }
 
 // getRestore 转存到网盘 - 匹配 PHP 版本
-func (x *XunleiPanService) getRestore(shareID string, infoData map[string]interface{}, accessToken, captchaToken, parentID string) (map[string]interface{}, error) {
-	ids := make([]string, 0)
-	if files, ok := infoData["files"].([]interface{}); ok {
-		for _, file := range files {
-			if fileMap, ok2 := file.(map[string]interface{}); ok2 {
-				if id, ok3 := fileMap["id"].(string); ok3 {
-					ids = append(ids, id)
-				}
-			}
-		}
-	}
-
+func (x *XunleiPanService) getRestore(shareID string, infoData map[string]interface{}, ids []string, accessToken, captchaToken, parentID string) (map[string]interface{}, error) {
 	passCodeToken := ""
 	if token, ok := infoData["pass_code_token"]; ok {
 		if tokenStr, ok2 := token.(string); ok2 {
@@ -903,21 +922,111 @@ func (x *XunleiPanService) FileBatchShare(ids []string, needPassword bool, expir
 // Share 对系统已存文件按 fid 重新生成迅雷分享链接（实现 Sharer，FR-015）。
 // expiration_days=0 表示永久分享（迅雷语义）。失败时由调用方（决策树）回退到「判原始→转存」。
 func (x *XunleiPanService) Share(fid string) (*TransferResult, error) {
-	if fid == "" {
+	fileIDs := splitPanFIDs(fid)
+	if len(fileIDs) == 0 {
 		return &TransferResult{Success: false, Message: "fid 为空"}, nil
 	}
-	resp, err := x.FileBatchShare([]string{fid}, false, 0)
+	accessToken, err := x.getAccessToken()
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("获取accessToken失败: %v", err)}, nil
+	}
+	captchaToken, err := x.getCaptchaToken()
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("获取captchaToken失败: %v", err)}, nil
+	}
+	promoFID, err := x.ensureTransferPromoFolder(accessToken, captchaToken)
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("创建推广文件夹失败: %v", err)}, nil
+	}
+	shareFileIDs, err := appendPanFID(fileIDs, promoFID)
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("添加推广文件夹失败: %v", err)}, nil
+	}
+	resp, err := x.getSharePassword(shareFileIDs, accessToken, captchaToken, "-1")
 	if err != nil {
 		return &TransferResult{Success: false, Message: fmt.Sprintf("创建分享失败: %v", err)}, nil
 	}
-	if resp == nil || resp.Code != 0 || resp.Data.ShareURL == "" {
-		msg := "创建分享失败"
-		if resp != nil && resp.Msg != "" {
-			msg = resp.Msg
-		}
-		return &TransferResult{Success: false, Message: msg}, nil
+	shareURL, _ := resp["share_url"].(string)
+	passCode, _ := resp["pass_code"].(string)
+	if shareURL == "" {
+		return &TransferResult{Success: false, Message: "创建分享未返回链接"}, nil
 	}
-	return &TransferResult{Success: true, ShareURL: resp.Data.ShareURL, Fid: fid}, nil
+	if passCode != "" {
+		shareURL += "?pwd=" + passCode
+	}
+	return &TransferResult{Success: true, ShareURL: shareURL, Fid: fid}, nil
+}
+
+// ensureTransferPromoFolder 确保迅雷账号根目录存在固定推广文件夹。
+func (x *XunleiPanService) ensureTransferPromoFolder(accessToken, captchaToken string) (string, error) {
+	transferPromoFolderMu.Lock()
+	defer transferPromoFolderMu.Unlock()
+
+	headers := map[string]string{
+		"Authorization":   "Bearer " + accessToken,
+		"x-captcha-token": captchaToken,
+	}
+	findExisting := func() (string, error) {
+		pageToken := ""
+		for page := 0; page < 200; page++ {
+			query := map[string]string{
+				"parent_id": "", "page_token": pageToken, "space": "", "limit": "100",
+				"filters": `{"trashed":{"eq":false}}`, "with_audit": "true",
+			}
+			response, err := x.requestXunleiApi(x.apiHost("")+"/drive/v1/files", "GET", nil, query, headers)
+			if err != nil {
+				return "", err
+			}
+			container := response
+			if data, ok := response["data"].(map[string]interface{}); ok {
+				container = data
+			}
+			if files, ok := container["files"].([]interface{}); ok {
+				for _, item := range files {
+					file, ok := item.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					name, _ := file["name"].(string)
+					kind, _ := file["kind"].(string)
+					if name == transferPromoFolderName && kind == "drive#folder" {
+						if id, ok := file["id"].(string); ok && id != "" {
+							return id, nil
+						}
+					}
+				}
+			}
+			next, _ := container["next_page_token"].(string)
+			if next == "" || next == pageToken {
+				return "", nil
+			}
+			pageToken = next
+		}
+		return "", fmt.Errorf("迅雷根目录超过分页上限")
+	}
+	if fid, err := findExisting(); err != nil {
+		return "", fmt.Errorf("检查迅雷根目录失败: %w", err)
+	} else if fid != "" {
+		return fid, nil
+	}
+	response, err := x.requestXunleiApi(x.apiHost("")+"/drive/v1/files", "POST", map[string]interface{}{
+		"kind": "drive#folder", "name": transferPromoFolderName, "parent_id": "", "space": "",
+	}, nil, headers)
+	if err == nil {
+		container := response
+		if data, ok := response["data"].(map[string]interface{}); ok {
+			container = data
+		}
+		if fid, ok := container["id"].(string); ok && fid != "" {
+			log.Printf("[xunlei] 已创建根目录推广文件夹 name=%s fid=%s", transferPromoFolderName, fid)
+			return fid, nil
+		}
+		err = fmt.Errorf("创建接口未返回文件夹 ID")
+	}
+	if fid, findErr := findExisting(); findErr == nil && fid != "" {
+		return fid, nil
+	}
+	return "", fmt.Errorf("创建迅雷推广文件夹失败: %v", err)
 }
 
 // ShareBatchDelete 取消分享（使用 BasePanService）

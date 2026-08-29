@@ -1273,11 +1273,11 @@ func (h *GoogleIndexHandler) DiagnosePermissions(c *gin.Context) {
 	}
 
 	// 测试特定站点访问
-	targetSite := "https://pan.l9.lc"
+	targetSite := "https://52juyou.com"
 	siteFormats := []string{
 		targetSite,
 		targetSite + "/",
-		"sc-domain:pan.l9.lc",
+		"sc-domain:52juyou.com",
 	}
 
 	for _, siteURL := range siteFormats {
@@ -1340,7 +1340,7 @@ func (h *GoogleIndexHandler) DiagnosePermissions(c *gin.Context) {
 	// 添加具体操作步骤
 	diagnosis["recommendations"] = append(diagnosis["recommendations"].([]string),
 		"1. 登录Google Search Console: https://search.google.com/search-console",
-		"2. 选择站点 https://pan.l9.lc",
+		"2. 选择站点 https://52juyou.com",
 		"3. 进入 设置 → 用户和权限",
 		"4. 添加用户: "+creds.ClientEmail,
 		"5. 授予 '所有者' 或 '完整' 权限",
