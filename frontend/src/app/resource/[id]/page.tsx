@@ -14,7 +14,7 @@ import {
 import { fetchUrldb } from "@/lib/urldb-server";
 
 export const metadata: Metadata = {
-  title: "资源详情 - PanSearch",
+  title: "资源详情 - 聚优盘",
   description: "查看网盘资源详情并获取新的分享链接。",
 };
 
@@ -51,7 +51,7 @@ async function loadResource(key: string) {
 
 function ResourceUnavailable({ backHref }: { backHref: string }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-5 text-center text-foreground">
+    <main className="flex min-h-screen items-center justify-center bg-transparent px-5 text-center text-foreground">
       <div className="flex w-full max-w-md flex-col items-center rounded-2xl border border-border bg-card px-6 py-12 shadow-[0_2px_16px_rgb(17_24_39_/_0.04)]">
         <span className="flex size-14 items-center justify-center rounded-2xl bg-red-50 text-red-600">
           <AlertCircle className="size-6" aria-hidden="true" />
