@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: url_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: super-search-postgres-password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -25,7 +25,7 @@ services:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: postgres
-      DB_PASSWORD: super-search-postgres-password
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       DB_NAME: url_db
       PORT: 8080
       TIMEZONE: Asia/Shanghai
@@ -35,6 +35,23 @@ services:
         condition: service_healthy
     volumes:
       - uploads:/root/uploads
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-18080}:8080"
+    networks:
+      - internal
+
+  admin:
+    image: ghcr.io/zhangrj6/super-search-admin:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NUXT_PUBLIC_API_SERVER: http://backend:8080/api
+      NUXT_PUBLIC_API_BASE: /api
+      NUXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-http://localhost}
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-13001}:3000"
     networks:
       - internal
 
@@ -48,20 +65,6 @@ services:
       - backend
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-13000}:3000"
-    networks:
-      - internal
-
-  admin:
-    image: ghcr.io/zhangrj6/super-search-admin:latest
-    restart: unless-stopped
-    environment:
-      NODE_ENV: production
-      NUXT_PUBLIC_API_SERVER: http://backend:8080/api
-      NUXT_PUBLIC_API_CLIENT: /api
-    depends_on:
-      - backend
-    ports:
-      - "127.0.0.1:${ADMIN_PORT:-13001}:3000"
     networks:
       - internal
 

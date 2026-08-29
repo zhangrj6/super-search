@@ -29,8 +29,15 @@ cp .env.example .env
 docker compose -f compose.yml up -d --build
 ```
 
-The public Next.js application listens on `127.0.0.1:13000` by default. Put
-Nginx or another reverse proxy in front of it for public access.
+The public Next.js application listens on `127.0.0.1:13000` by default. The
+URLDB administration frontend listens on `127.0.0.1:13001`, and the Go API
+listens on `127.0.0.1:18080`. Put Nginx or another reverse proxy in front of
+these loopback-only ports for public access. The provided Nginx configuration
+keeps the search application at `/`, exposes the API at `/api/`, and serves the
+administration frontend at `/admin`.
+
+On a new database, sign in to `/login` with the URLDB default administrator
+account (`admin` / `password`) and change the password immediately.
 
 ## Frontend development
 

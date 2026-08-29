@@ -1,13 +1,13 @@
 # 前端构建阶段
 FROM node:20-slim AS frontend-builder
 
-# 安装pnpm
 WORKDIR /app/web
 COPY web/ ./
-RUN npm install --frozen-lockfile --legacy-peer-deps
+RUN corepack enable && corepack prepare pnpm@9.13.0 --activate
+RUN pnpm install --frozen-lockfile
 ARG NUXT_PUBLIC_API_SERVER=http://backend:8080/api
-ARG NUXT_PUBLIC_API_CLIENT=/api
-RUN npm run build
+ARG NUXT_PUBLIC_API_BASE=/api
+RUN pnpm build
 
 # 前端运行阶段
 FROM node:20-alpine AS frontend
@@ -71,4 +71,4 @@ ENV TZ=Asia/Shanghai
 EXPOSE 8080
 
 # 运行应用
-CMD ["./main"] 
+CMD ["./main"]

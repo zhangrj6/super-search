@@ -62,7 +62,7 @@ jobs:
           push: true
           build-args: |
             NUXT_PUBLIC_API_SERVER=http://backend:8080/api
-            NUXT_PUBLIC_API_CLIENT=/api
+            NUXT_PUBLIC_API_BASE=/api
           tags: |
             ${{ env.ADMIN_IMAGE }}:latest
             ${{ env.ADMIN_IMAGE }}:sha-${{ github.sha }}
