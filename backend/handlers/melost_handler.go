@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	pan "github.com/ctwj/urldb/common"
@@ -22,14 +23,16 @@ import (
 type MelostHandler struct {
 	repoMgr *repo.RepositoryManager
 	client  *services.MelostClient
+	xusou   *services.XusouClient
 	stageMu sync.Mutex
 }
 
 type melostSearchRequest struct {
-	Query string `json:"q" binding:"required"`
-	Type  string `json:"type"`
-	Page  int    `json:"page"`
-	Size  int    `json:"size"`
+	Query      string `json:"q" binding:"required"`
+	Type       string `json:"type"`
+	SearchType string `json:"search_type"`
+	Page       int    `json:"page"`
+	Size       int    `json:"size"`
 }
 
 type melostStageRequest struct {
@@ -43,18 +46,21 @@ type melostStageRequest struct {
 	SharedTime string   `json:"shared_time"`
 	ShareUser  string   `json:"share_user"`
 	Size       int64    `json:"size"`
+	Source     string   `json:"source"`
 }
 
 type melostSearchItemResponse struct {
 	services.MelostSearchResult
 	CanStage     bool   `json:"can_stage"`
 	StageMessage string `json:"stage_message,omitempty"`
+	Source       string `json:"source,omitempty"`
 }
 
 func NewMelostHandler(repoMgr *repo.RepositoryManager) *MelostHandler {
 	return &MelostHandler{
 		repoMgr: repoMgr,
 		client:  services.NewMelostClient(),
+		xusou:   services.NewXusouClient(),
 	}
 }
 
@@ -70,9 +76,21 @@ func (h *MelostHandler) Search(c *gin.Context) {
 		ErrorResponse(c, "搜索关键词长度应为 1 到 100 个字符", http.StatusBadRequest)
 		return
 	}
-	request.Type = strings.ToUpper(strings.TrimSpace(request.Type))
-	if !isAllowedMelostType(request.Type) {
-		ErrorResponse(c, "不支持的网盘类型", http.StatusBadRequest)
+	request.SearchType = strings.ToLower(strings.TrimSpace(request.SearchType))
+	if request.SearchType == "" {
+		// Accept the mode in the legacy type field as a compatibility aid for
+		// clients that do not yet send search_type.
+		legacyType := strings.ToLower(strings.TrimSpace(request.Type))
+		if legacyType == "video" || legacyType == "resource" {
+			request.SearchType = legacyType
+			request.Type = ""
+		}
+	}
+	if request.SearchType == "" {
+		request.SearchType = "resource"
+	}
+	if request.SearchType != "resource" && request.SearchType != "video" {
+		ErrorResponse(c, "不支持的搜索类型", http.StatusBadRequest)
 		return
 	}
 	if request.Page < 1 {
@@ -83,6 +101,19 @@ func (h *MelostHandler) Search(c *gin.Context) {
 	}
 	if request.Size < 1 || request.Size > 20 {
 		request.Size = 20
+	}
+	request.Type = strings.ToUpper(strings.TrimSpace(request.Type))
+	if request.Type == "" {
+		request.Type = "QUARK"
+	}
+	if !isAllowedMelostType(request.Type) {
+		ErrorResponse(c, "仅支持夸克网盘和迅雷云盘", http.StatusBadRequest)
+		return
+	}
+
+	if request.SearchType == "video" {
+		h.searchVideos(c, request)
+		return
 	}
 
 	result, err := h.client.Search(c.Request.Context(), services.MelostSearchParams{
@@ -99,24 +130,111 @@ func (h *MelostHandler) Search(c *gin.Context) {
 
 	items := make([]melostSearchItemResponse, 0, len(result.Items))
 	for _, item := range result.Items {
-		_, _, supported := transferServiceForURL(item.Link)
-		response := melostSearchItemResponse{
-			MelostSearchResult: item,
-			CanStage:           supported,
+		items = append(items, buildSearchItemResponse(item, "melost"))
+	}
+
+	SuccessResponse(c, gin.H{
+		"total":       result.Total,
+		"page":        result.Page,
+		"page_size":   result.PageSize,
+		"took":        result.Took,
+		"items":       items,
+		"search_type": "resource",
+	})
+}
+
+func (h *MelostHandler) searchVideos(c *gin.Context, request melostSearchRequest) {
+	if h.xusou == nil {
+		ErrorResponse(c, "视频搜索服务暂时不可用，请稍后重试", http.StatusBadGateway)
+		return
+	}
+	started := time.Now()
+	xusouType, ok := xusouTypeForProvider(request.Type)
+	if !ok {
+		ErrorResponse(c, "仅支持夸克网盘和迅雷云盘", http.StatusBadRequest)
+		return
+	}
+	results, err := h.xusou.Search(c.Request.Context(), request.Query, xusouType)
+	if err != nil {
+		utils.Error("xusou 视频搜索失败 query=%q: %v", request.Query, err)
+		ErrorResponse(c, "视频搜索服务暂时不可用，请稍后重试", http.StatusBadGateway)
+		return
+	}
+
+	total := len(results)
+	start := (request.Page - 1) * request.Size
+	if start > total {
+		start = total
+	}
+	end := start + request.Size
+	if end > total {
+		end = total
+	}
+	items := make([]melostSearchItemResponse, 0, end-start)
+	for _, item := range results[start:end] {
+		melostItem := services.MelostSearchResult{
+			DocID:     services.XusouResultID(item),
+			DiskName:  item.Title,
+			DiskType:  xusouDiskType(item.IsType),
+			Link:      item.URL,
+			Files:     item.LineName,
+			Tags:      compactTags(item.LineName),
+			ShareUser: "许搜",
 		}
-		if !supported {
-			response.StageMessage = "该链接类型暂不支持转存"
+		response := melostSearchItemResponse{
+			MelostSearchResult: melostItem,
+			CanStage:           true,
+			Source:             "xusou",
 		}
 		items = append(items, response)
 	}
 
 	SuccessResponse(c, gin.H{
-		"total":     result.Total,
-		"page":      result.Page,
-		"page_size": result.PageSize,
-		"took":      result.Took,
-		"items":     items,
+		"total":       total,
+		"page":        request.Page,
+		"page_size":   request.Size,
+		"took":        time.Since(started).Milliseconds(),
+		"items":       items,
+		"search_type": "video",
 	})
+}
+
+func buildSearchItemResponse(item services.MelostSearchResult, source string) melostSearchItemResponse {
+	_, _, supported := transferServiceForURL(item.Link)
+	response := melostSearchItemResponse{
+		MelostSearchResult: item,
+		CanStage:           supported,
+		Source:             source,
+	}
+	if !supported {
+		response.StageMessage = "该链接类型暂不支持转存"
+	}
+	return response
+}
+
+func xusouDiskType(isType int) string {
+	if isType == 4 {
+		return "XUNLEI"
+	}
+	return "QUARK"
+}
+
+func xusouTypeForProvider(provider string) (int, bool) {
+	switch strings.ToUpper(strings.TrimSpace(provider)) {
+	case "QUARK":
+		return 0, true
+	case "XUNLEI":
+		return 4, true
+	default:
+		return 0, false
+	}
+}
+
+func compactTags(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return []string{}
+	}
+	return []string{value}
 }
 
 // StageResource saves a melost result locally without accessing a cloud-drive account.
@@ -131,9 +249,24 @@ func (h *MelostHandler) StageResource(c *gin.Context) {
 	request.DocID = services.NormalizeMelostText(request.DocID, 128)
 	request.ShareUser = services.NormalizeMelostText(request.ShareUser, 100)
 	request.Link = strings.TrimSpace(request.Link)
+	resourceSource := "melost"
 	if request.Title == "" {
 		ErrorResponse(c, "资源标题不能为空", http.StatusBadRequest)
 		return
+	}
+	if strings.EqualFold(strings.TrimSpace(request.Source), "xusou") {
+		if h.xusou == nil {
+			ErrorResponse(c, "视频链接服务暂时不可用，请稍后重试", http.StatusBadGateway)
+			return
+		}
+		resolvedLink, resolveErr := h.xusou.Resolve(c.Request.Context(), request.Link, request.Title)
+		if resolveErr != nil {
+			utils.Error("xusou 分享链接解析失败 title=%q: %v", request.Title, resolveErr)
+			ErrorResponse(c, "视频链接获取失败，请稍后重试", http.StatusBadGateway)
+			return
+		}
+		request.Link = resolvedLink
+		resourceSource = "xusou"
 	}
 
 	serviceType, _, supported := transferServiceForURL(request.Link)
@@ -156,7 +289,7 @@ func (h *MelostHandler) StageResource(c *gin.Context) {
 	existing, err := h.repoMgr.ResourceRepository.GetByURL(request.Link)
 	if err == nil {
 		fields := map[string]interface{}{
-			"source":      "melost",
+			"source":      resourceSource,
 			"external_id": request.DocID,
 			"is_valid":    true,
 			"is_public":   true,
@@ -206,7 +339,7 @@ func (h *MelostHandler) StageResource(c *gin.Context) {
 		IsPublic:    true,
 		Author:      request.ShareUser,
 		Key:         key,
-		Source:      "melost",
+		Source:      resourceSource,
 		ExternalID:  request.DocID,
 	}
 	if err := h.repoMgr.ResourceRepository.Create(resource); err != nil {
@@ -297,7 +430,7 @@ func transferServiceForURL(rawURL string) (serviceType, displayName string, supp
 
 func isAllowedMelostType(value string) bool {
 	switch value {
-	case "", "BDY", "ALY", "QUARK", "XUNLEI", "UC":
+	case "QUARK", "XUNLEI":
 		return true
 	default:
 		return false

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -14,10 +15,11 @@ import (
 // CleanupService 转存文件自动清理服务
 // 周期性扫描已转存且超过保留期的资源，调用网盘 API 删除文件并清空转存字段
 type CleanupService struct {
-	resourceRepo repo.ResourceRepository
-	configRepo   repo.SystemConfigRepository
-	cksRepo      repo.CksRepository
-	panRepo      repo.PanRepository
+	resourceRepo       repo.ResourceRepository
+	transferRecordRepo repo.TransferRecordRepository
+	configRepo         repo.SystemConfigRepository
+	cksRepo            repo.CksRepository
+	panRepo            repo.PanRepository
 }
 
 // NewCleanupService 创建清理服务
@@ -26,12 +28,18 @@ func NewCleanupService(
 	configRepo repo.SystemConfigRepository,
 	cksRepo repo.CksRepository,
 	panRepo repo.PanRepository,
+	transferRecordRepos ...repo.TransferRecordRepository,
 ) *CleanupService {
+	var transferRecordRepo repo.TransferRecordRepository
+	if len(transferRecordRepos) > 0 {
+		transferRecordRepo = transferRecordRepos[0]
+	}
 	return &CleanupService{
-		resourceRepo: resourceRepo,
-		configRepo:   configRepo,
-		cksRepo:      cksRepo,
-		panRepo:      panRepo,
+		resourceRepo:       resourceRepo,
+		transferRecordRepo: transferRecordRepo,
+		configRepo:         configRepo,
+		cksRepo:            cksRepo,
+		panRepo:            panRepo,
 	}
 }
 
@@ -40,44 +48,104 @@ func NewCleanupService(
 func (s *CleanupService) Run(ctx context.Context) (total, success, failed int, err error) {
 	startTime := time.Now()
 	utils.Info("[CleanupService] 开始执行清理任务")
-
-	// 读取保留天数配置，缺失或非法时使用默认值 7 天
-	retentionDays, cfgErr := s.configRepo.GetConfigInt(entity.ConfigKeyAutoCleanupRetentionDays)
-	if cfgErr != nil || retentionDays <= 0 {
-		retentionDays = 7
-		utils.Warn("[CleanupService] 读取保留天数配置失败或非法，使用默认值 7 天: %v", cfgErr)
-	}
-
-	// 每轮处理上限，避免长时间阻塞调度器（可后续接入并发配置）
-	batchLimit := 100
-
-	resources, err := s.resourceRepo.FindDueForCleanup(retentionDays, batchLimit)
-	if err != nil {
-		utils.Error("[CleanupService] 查询待清理资源失败: %v", err)
-		return 0, 0, 0, err
-	}
-
-	total = len(resources)
-	if total == 0 {
-		utils.Info("[CleanupService] 没有待清理的资源（保留期=%d天）", retentionDays)
-		return 0, 0, 0, nil
-	}
-
-	utils.Info("[CleanupService] 找到 %d 个待清理资源，保留期=%d天", total, retentionDays)
-
-	// 按 ck_id 缓存账号信息，避免重复查询
+	const batchLimit = 100
+	now := time.Now()
 	accountCache := make(map[uint]*entity.Cks)
+	processedFiles := make(map[string]struct{})
+
+	if s.transferRecordRepo != nil {
+		records, findErr := s.transferRecordRepo.FindDueForCleanup(now, batchLimit)
+		if findErr != nil {
+			utils.Error("[CleanupService] 查询审计清理队列失败: %v", findErr)
+			return 0, 0, 0, findErr
+		}
+
+		groups := groupCleanupRecords(records)
+		for _, group := range groups {
+			select {
+			case <-ctx.Done():
+				utils.Warn("[CleanupService] 任务被取消，已处理 %d 条文件", success+failed)
+				return total, success, failed, nil
+			default:
+			}
+
+			record := group[0]
+			if record.AccountID == nil || *record.AccountID == 0 || strings.TrimSpace(record.FileID) == "" {
+				total++
+				message := "审计记录缺少 account_id 或 file_id"
+				for _, item := range group {
+					_ = s.transferRecordRepo.MarkCleanupError(item.ID, message, now)
+				}
+				failed++
+				continue
+			}
+
+			accountID := *record.AccountID
+			fileKey := cleanupFileKey(accountID, record.FileID)
+			processedFiles[fileKey] = struct{}{}
+			due, dueErr := s.transferRecordRepo.IsFileDueForCleanup(accountID, record.FileID, now)
+			if dueErr != nil {
+				total++
+				_ = s.transferRecordRepo.MarkFileCleanupError(accountID, record.FileID, truncateMsg(dueErr.Error()), now)
+				failed++
+				continue
+			}
+			if !due {
+				continue
+			}
+
+			total++
+			account, accErr := s.resolveAccountByID(accountID, accountCache)
+			if accErr != nil {
+				utils.Error("[CleanupService] 审计文件 %s 解析账号失败: %v", record.FileID, accErr)
+				_ = s.transferRecordRepo.MarkFileCleanupError(accountID, record.FileID, truncateMsg(accErr.Error()), now)
+				failed++
+				continue
+			}
+
+			delErr := s.deleteFile(account, record.FileID)
+			if delErr == nil || isFileNotExist(delErr) {
+				cleanedAt := time.Now()
+				if markErr := s.transferRecordRepo.MarkFileCleaned(accountID, record.FileID, cleanedAt); markErr != nil {
+					utils.Error("[CleanupService] 文件已删除但审计状态更新失败: %v", markErr)
+				}
+				for _, resourceID := range cleanupResourceIDs(group) {
+					if markErr := s.resourceRepo.MarkCleanedIfFileMatches(resourceID, record.FileID, cleanedAt); markErr != nil {
+						utils.Error("[CleanupService] 资源 ID=%d 清空转存字段失败: %v", resourceID, markErr)
+					}
+				}
+				success++
+				continue
+			}
+
+			utils.Error("[CleanupService] 审计文件清理失败 account=%d file=%s: %v", accountID, record.FileID, delErr)
+			_ = s.transferRecordRepo.MarkFileCleanupError(accountID, record.FileID, truncateMsg(delErr.Error()), time.Now())
+			failed++
+		}
+	}
+
+	// Legacy resources created before transfer_records existed remain eligible.
+	resources, legacyErr := s.resourceRepo.FindDueForCleanup(int(TransferFileRetention/time.Minute), batchLimit)
+	if legacyErr != nil {
+		utils.Error("[CleanupService] 查询历史清理队列失败: %v", legacyErr)
+		return total, success, failed, legacyErr
+	}
 
 	for _, res := range resources {
-		// 检查上下文是否已取消（调度器停止时立即退出）
 		select {
 		case <-ctx.Done():
-			utils.Warn("[CleanupService] 任务被取消，已处理 %d/%d", success+failed, total)
+			utils.Warn("[CleanupService] 任务被取消，已处理 %d 条文件", success+failed)
 			return total, success, failed, nil
 		default:
 		}
 
-		// 无效 fid 直接跳过（数据异常，记录失败但不重试）
+		if res.CkID != nil {
+			if _, seen := processedFiles[cleanupFileKey(*res.CkID, res.Fid)]; seen {
+				continue
+			}
+		}
+		total++
+
 		if res.Fid == "" {
 			utils.Warn("[CleanupService] 资源 ID=%d 无 fid，跳过删除并标记失败", res.ID)
 			_ = s.resourceRepo.MarkCleanError(res.ID, "fid 为空", time.Now())
@@ -85,7 +153,6 @@ func (s *CleanupService) Run(ctx context.Context) (total, success, failed int, e
 			continue
 		}
 
-		// 解析资源对应的账号 cookie（FR-012 防跨账号误删）
 		account, accErr := s.resolveAccount(res, accountCache)
 		if accErr != nil {
 			utils.Error("[CleanupService] 资源 ID=%d 解析账号失败: %v", res.ID, accErr)
@@ -94,24 +161,19 @@ func (s *CleanupService) Run(ctx context.Context) (total, success, failed int, e
 			continue
 		}
 
-		// 调用网盘 API 删除文件
 		delErr := s.deleteFile(account, res.Fid)
 		if delErr == nil {
-			// 成功：清空 fid/save_url，写入 cleaned_at
-			if err := s.resourceRepo.MarkCleaned(res.ID, time.Now()); err != nil {
+			if err := s.resourceRepo.MarkCleanedIfFileMatches(res.ID, res.Fid, time.Now()); err != nil {
 				utils.Error("[CleanupService] 资源 ID=%d 文件已删除但更新数据库失败: %v", res.ID, err)
-				// 文件已删除，不视为失败但记录错误
 			} else {
 				utils.Info("[CleanupService] 资源 ID=%d 清理成功", res.ID)
 			}
 			success++
 		} else if isFileNotExist(delErr) {
-			// 文件不存在视为成功（FR-009）
 			utils.Info("[CleanupService] 资源 ID=%d 网盘文件已不存在，视为清理成功: %v", res.ID, delErr)
-			_ = s.resourceRepo.MarkCleaned(res.ID, time.Now())
+			_ = s.resourceRepo.MarkCleanedIfFileMatches(res.ID, res.Fid, time.Now())
 			success++
 		} else {
-			// 其他失败：保留 fid/save_url，等待下一轮重试（FR-006 不阻塞）
 			utils.Error("[CleanupService] 资源 ID=%d 清理失败: %v", res.ID, delErr)
 			_ = s.resourceRepo.MarkCleanError(res.ID, truncateMsg(delErr.Error()), time.Now())
 			failed++
@@ -123,13 +185,56 @@ func (s *CleanupService) Run(ctx context.Context) (total, success, failed int, e
 	return total, success, failed, nil
 }
 
+func groupCleanupRecords(records []entity.TransferRecord) [][]entity.TransferRecord {
+	groupsByKey := make(map[string][]entity.TransferRecord)
+	order := make([]string, 0)
+	for _, record := range records {
+		key := fmt.Sprintf("record:%d", record.ID)
+		if record.AccountID != nil && *record.AccountID != 0 && strings.TrimSpace(record.FileID) != "" {
+			key = cleanupFileKey(*record.AccountID, record.FileID)
+		}
+		if _, exists := groupsByKey[key]; !exists {
+			order = append(order, key)
+		}
+		groupsByKey[key] = append(groupsByKey[key], record)
+	}
+	groups := make([][]entity.TransferRecord, 0, len(order))
+	for _, key := range order {
+		groups = append(groups, groupsByKey[key])
+	}
+	return groups
+}
+
+func cleanupFileKey(accountID uint, fileID string) string {
+	return fmt.Sprintf("%d:%s", accountID, fileID)
+}
+
+func cleanupResourceIDs(records []entity.TransferRecord) []uint {
+	seen := make(map[uint]struct{})
+	ids := make([]uint, 0)
+	for _, record := range records {
+		if record.ResourceID == nil || *record.ResourceID == 0 {
+			continue
+		}
+		if _, exists := seen[*record.ResourceID]; exists {
+			continue
+		}
+		seen[*record.ResourceID] = struct{}{}
+		ids = append(ids, *record.ResourceID)
+	}
+	return ids
+}
+
 // resolveAccount 解析资源对应的账号 cookie
 // 通过 ck_id 查询账号，确保使用与转存时同一账号进行删除（防跨账号误删）
 func (s *CleanupService) resolveAccount(res *entity.Resource, cache map[uint]*entity.Cks) (*entity.Cks, error) {
 	if res.CkID == nil {
 		return nil, errNoAccountBound
 	}
-	accID := *res.CkID
+	return s.resolveAccountByID(*res.CkID, cache)
+}
+
+func (s *CleanupService) resolveAccountByID(accID uint, cache map[uint]*entity.Cks) (*entity.Cks, error) {
 
 	// 命中缓存
 	if acc, ok := cache[accID]; ok && acc != nil {

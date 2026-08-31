@@ -7,12 +7,16 @@ import { JsonLd } from "@/components/json-ld";
 import { ResourceDetail } from "@/components/resource-detail";
 import { Button } from "@/components/ui/button";
 import {
+  DEFAULT_PROVIDER,
+  DEFAULT_SEARCH_MODE,
+  isSearchMode,
+  isProvider,
   resourceTagNames,
   sanitizeResourceDisplayText,
   type ApiEnvelope,
-  isProvider,
   type Provider,
   type ResourceGroupResponse,
+  type SearchMode,
   type UrldbResource,
 } from "@/lib/resources";
 import {
@@ -138,14 +142,16 @@ export default async function ResourcePage({ params, searchParams }: ResourcePag
   const currentSearch = await searchParams;
   const query = (firstValue(currentSearch.q) ?? "").trim().slice(0, 100);
   const providerValue = firstValue(currentSearch.provider);
-  const provider: Provider = isProvider(providerValue) ? providerValue : "全部";
+  const provider: Provider = isProvider(providerValue) ? providerValue : DEFAULT_PROVIDER;
+  const modeValue = firstValue(currentSearch.mode);
+  const mode: SearchMode = isSearchMode(modeValue) ? modeValue : DEFAULT_SEARCH_MODE;
   const requestedPage = Number.parseInt(firstValue(currentSearch.page) ?? "1", 10);
   const page = Number.isFinite(requestedPage) ? Math.min(500, Math.max(1, requestedPage)) : 1;
 
   let backHref = "/";
   if (query) {
-    const backParams = new URLSearchParams({ q: query });
-    if (provider !== "全部") backParams.set("provider", provider);
+    const backParams = new URLSearchParams({ q: query, provider });
+    if (mode !== DEFAULT_SEARCH_MODE) backParams.set("mode", mode);
     if (page > 1) backParams.set("page", String(page));
     backHref = `/search?${backParams.toString()}`;
   }

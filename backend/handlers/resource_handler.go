@@ -302,7 +302,7 @@ func GetResourcesByKey(c *gin.Context) {
 	var responses []dto.ResourceResponse
 	for _, resource := range resources {
 		response := converter.ToResourceResponse(&resource)
-		if resource.Source == "melost" {
+		if resource.Source == "melost" || resource.Source == "xusou" {
 			response.URL = ""
 			response.SaveURL = ""
 		}
@@ -775,10 +775,10 @@ func GetResourceLink(c *gin.Context) {
 		utils.Error("记录资源访问失败: %v", err)
 	}
 
-	// melost results are staged without touching a cloud drive. Their original
-	// links are never returned to visitors: this endpoint must produce a new
-	// share link or fail.
-	if resource.Source == "melost" {
+	// External-search results are staged without touching a cloud drive. Their
+	// original links are never returned to visitors: this endpoint must produce
+	// a new share link or fail.
+	if resource.Source == "melost" || resource.Source == "xusou" {
 		if resource.SaveURL != "" {
 			SuccessResponse(c, gin.H{
 				"url":         resource.SaveURL,
@@ -803,6 +803,7 @@ func GetResourceLink(c *gin.Context) {
 				repoManager.SystemConfigRepository,
 				repoManager.ResourceRepository,
 				freshResource,
+				resource.Source,
 			)
 			if !transferResult.Success || strings.TrimSpace(transferResult.SaveURL) == "" {
 				errorMessage := strings.TrimSpace(transferResult.ErrorMsg)
@@ -814,7 +815,7 @@ func GetResourceLink(c *gin.Context) {
 			return transferResult.SaveURL, nil
 		})
 		if transferErr != nil {
-			utils.Error("melost 资源转存失败 resource=%d: %v", resource.ID, transferErr)
+			utils.Error("站外搜索资源转存失败 resource=%d source=%s: %v", resource.ID, resource.Source, transferErr)
 			ErrorResponse(c, "转存失败："+transferErr.Error(), http.StatusBadGateway)
 			return
 		}
@@ -887,7 +888,7 @@ func GetResourceLink(c *gin.Context) {
 
 	// 执行自动转存
 	utils.Info("开始执行自动转存")
-	transferResult := services.PerformAutoTransfer(repoManager.CksRepository, repoManager.SystemConfigRepository, repoManager.ResourceRepository, resource)
+	transferResult := services.PerformAutoTransfer(repoManager.CksRepository, repoManager.SystemConfigRepository, repoManager.ResourceRepository, resource, "web_resource_detail")
 
 	if transferResult.Success {
 		utils.Info("自动转存成功，返回转存链接: %s", transferResult.SaveURL)

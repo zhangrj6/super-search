@@ -14,6 +14,7 @@ export interface MelostSearchItem {
   size: number
   can_stage: boolean
   stage_message?: string
+  source?: string
 }
 
 export interface MelostSearchResponse {
@@ -51,7 +52,8 @@ export const useMelostApi = () => {
         tags: item.tags,
         shared_time: item.shared_time,
         share_user: item.share_user,
-        size: item.size
+        size: item.size,
+        source: item.source
       }
     }).then(parseApiResponse<MelostStageResponse>)
 

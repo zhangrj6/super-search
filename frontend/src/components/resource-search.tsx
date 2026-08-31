@@ -6,13 +6,19 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { Provider } from "@/lib/resources";
+import { SearchLoadingOverlay } from "@/components/search-loading-overlay";
+import {
+  DEFAULT_PROVIDER,
+  DEFAULT_SEARCH_MODE,
+  SEARCH_MODE_VALUES,
+  type SearchMode,
+} from "@/lib/resources";
 import logo from "@/assets/logo.png";
 
 export function ResourceSearch() {
   const router = useRouter();
-  const [provider] = useState<Provider>("全部");
   const [query, setQuery] = useState("");
+  const [mode, setMode] = useState<SearchMode>(DEFAULT_SEARCH_MODE);
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -40,8 +46,8 @@ export function ResourceSearch() {
     }
 
     setQuery(nextQuery);
-    const params = new URLSearchParams({ q: nextQuery });
-    if (provider !== "全部") params.set("provider", provider);
+    const params = new URLSearchParams({ q: nextQuery, provider: DEFAULT_PROVIDER });
+    if (mode !== DEFAULT_SEARCH_MODE) params.set("mode", mode);
 
     startTransition(() => {
       router.push(`/search?${params.toString()}`);
@@ -55,6 +61,7 @@ export function ResourceSearch() {
 
   return (
     <main className="flex min-h-screen flex-col overflow-hidden bg-transparent">
+      {isPending ? <SearchLoadingOverlay /> : null}
       <section className="relative z-10 mx-auto flex min-h-[calc(100svh-7rem)] w-full max-w-5xl flex-1 flex-col justify-center px-5 py-12 sm:px-8 sm:py-16">
         <div
           id="search"
@@ -83,10 +90,32 @@ export function ResourceSearch() {
             聚优盘网盘资源搜索
           </h1>
           <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500 sm:text-base">
-            搜索百度网盘、夸克网盘、阿里云盘、迅雷云盘和 UC 网盘中的影视、课程、教程与文档资源。
+            {mode === "video"
+              ? "搜索夸克网盘和迅雷云盘中的视频资源。"
+              : "搜索夸克网盘和迅雷云盘中的影视、课程、教程与文档资源。"}
           </p>
 
-          <form className="mt-7 w-full max-w-2xl sm:mt-8" action="/search" method="get" onSubmit={handleSubmit}>
+          <div className="mt-5 inline-flex min-h-11 items-center gap-1 rounded-xl border border-white/80 bg-white/65 p-1 shadow-[0_8px_24px_rgb(15_23_42_/_0.06)] backdrop-blur-lg" role="group" aria-label="搜索类型">
+            {SEARCH_MODE_VALUES.map((item) => (
+              <button
+                className={`min-h-9 rounded-lg px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 ${mode === item ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-white/80"}`}
+                type="button"
+                key={item}
+                aria-pressed={mode === item}
+                onClick={() => setMode(item)}
+              >
+                {item === "resource" ? "资源" : "视频"}
+              </button>
+            ))}
+          </div>
+
+          <form
+            className="mt-7 w-full max-w-2xl sm:mt-8"
+            action="/search"
+            method="get"
+            onSubmit={handleSubmit}
+            aria-busy={isPending}
+          >
             <label className="sr-only" htmlFor="resource-query">
               搜索文件名或资源关键词
             </label>
@@ -104,7 +133,7 @@ export function ResourceSearch() {
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索影视、教程、资源关键词..."
+                placeholder={mode === "video" ? "搜索视频关键词..." : "搜索影视、教程、资源关键词..."}
                 aria-keyshortcuts="/"
                 autoComplete="off"
               />

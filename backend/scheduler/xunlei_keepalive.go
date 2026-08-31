@@ -12,7 +12,7 @@ import (
 // XunleiKeepaliveScheduler 迅雷 token 保活调度器。
 //
 // 迅雷没有"定时续期"机制，refresh_token 长期不被使用会自然过期（约 30 天），
-// 且安卓方案无账号密码兜底，过期后无法自动恢复。本任务定期遍历所有有效迅雷账号，
+// 且网页端方案无账号密码兜底，过期后无法自动恢复。本任务定期遍历所有有效迅雷账号，
 // 调用 Keepalive 刷新 access_token（顺带轮转 refresh_token），给 refresh_token 续命，
 // 避免闲置账号失效。
 type XunleiKeepaliveScheduler struct {

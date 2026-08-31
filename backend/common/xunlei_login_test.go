@@ -1,88 +1,196 @@
 package pan
 
 import (
-	"crypto/md5"
-	"encoding/hex"
+	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 )
 
-// TestXLSign_Structure 验证签名结构：必须为 "1." + 32 位十六进制。
-func TestXLSign_Structure(t *testing.T) {
-	sign := xlSignWithTimestamp(xlProfileAndroid, "test-device-id", "1700000000000")
-	if !strings.HasPrefix(sign, "1.") {
-		t.Fatalf("签名应以 '1.' 开头，实际: %s", sign)
-	}
-	hash := strings.TrimPrefix(sign, "1.")
-	if len(hash) != 32 {
-		t.Fatalf("签名哈希长度应为 32，实际: %d (%s)", len(hash), hash)
-	}
-	if _, err := hex.DecodeString(hash); err != nil {
-		t.Fatalf("签名哈希应为合法十六进制: %v", err)
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func jsonResponse(body string) *http.Response {
+	return jsonResponseWithStatus(http.StatusOK, body)
+}
+
+func jsonResponseWithStatus(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 }
 
-// TestXLSign_Deterministic 验证确定性：相同输入相同签名；不同输入/profile 不同签名。
-func TestXLSign_Deterministic(t *testing.T) {
-	s1 := xlSignWithTimestamp(xlProfileAndroid, "device-abc", "1700000000000")
-	if xlSignWithTimestamp(xlProfileAndroid, "device-abc", "1700000000000") != s1 {
-		t.Fatal("相同输入应产生相同签名")
+func TestLoginByRefreshTokenUsesWebIdentity(t *testing.T) {
+	svc := NewXunleiPanService(nil)
+	svc.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != xunleiAuthTokenURL {
+			t.Fatalf("请求地址 = %s, want %s", req.URL, xunleiAuthTokenURL)
+		}
+		if req.Header.Get("X-Client-Id") != xunleiWebClientID {
+			t.Fatalf("X-Client-Id = %q", req.Header.Get("X-Client-Id"))
+		}
+		if req.Header.Get("X-Device-Id") != xunleiWebDeviceID {
+			t.Fatalf("X-Device-Id = %q", req.Header.Get("X-Device-Id"))
+		}
+		if req.Header.Get("Origin") != "https://pan.xunlei.com" {
+			t.Fatalf("Origin = %q", req.Header.Get("Origin"))
+		}
+
+		var body map[string]interface{}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Fatalf("解析请求体失败: %v", err)
+		}
+		if body["client_id"] != xunleiWebClientID {
+			t.Fatalf("client_id = %v", body["client_id"])
+		}
+		if body["grant_type"] != "refresh_token" || body["refresh_token"] != "old-refresh" {
+			t.Fatalf("认证请求体不正确: %#v", body)
+		}
+		if _, exists := body["client_secret"]; exists {
+			t.Fatal("网页端 token 刷新不应携带 client_secret")
+		}
+		return jsonResponse(`{"access_token":"access","refresh_token":"new-refresh","expires_in":7200,"sub":"user-1"}`), nil
+	})}
+
+	token, err := svc.LoginByRefreshToken(" old-refresh ")
+	if err != nil {
+		t.Fatalf("LoginByRefreshToken error: %v", err)
 	}
-	if xlSignWithTimestamp(xlProfileAndroid, "device-xyz", "1700000000000") == s1 {
-		t.Fatal("不同 deviceID 应产生不同签名")
+	if token.AccessToken != "access" || token.RefreshToken != "new-refresh" {
+		t.Fatalf("token = %#v", token)
 	}
-	if xlSignWithTimestamp(xlProfileAndroid, "device-abc", "1700000000999") == s1 {
-		t.Fatal("不同 timestamp 应产生不同签名")
-	}
-	// 不同 profile（浏览器）应产生不同签名（不同 client_id/盐值）
-	if xlSignWithTimestamp(xlProfileBrowser, "device-abc", "1700000000000") == s1 {
-		t.Fatal("不同 profile 应产生不同签名")
+	if svc.extra.AuthClientID != xunleiWebClientID || svc.extra.Token == nil {
+		t.Fatalf("认证状态未缓存: %#v", svc.extra)
 	}
 }
 
-// TestXLSign_AlgorithmMatchesReference 验证算法与参考实现等价（固化算法防误改）。
-func TestXLSign_AlgorithmMatchesReference(t *testing.T) {
-	p := xlProfileAndroid
-	deviceID := "925b7631473a13716b791d7f28289cad"
-	timestamp := "1645241033384"
-	want := p.ClientID + p.ClientVersion + p.PackageName + deviceID + timestamp
-	for _, a := range p.Algorithms {
-		sum := md5.Sum([]byte(want + a))
-		want = hex.EncodeToString(sum[:])
+func TestCaptchaInitUsesReferencePayload(t *testing.T) {
+	svc := NewXunleiPanService(nil)
+	svc.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != xunleiCaptchaInitURL {
+			t.Fatalf("请求地址 = %s, want %s", req.URL, xunleiCaptchaInitURL)
+		}
+		if req.Header.Get("User-Agent") != xunleiCaptchaUserAgent {
+			t.Fatalf("captcha User-Agent = %q", req.Header.Get("User-Agent"))
+		}
+
+		var body struct {
+			ClientID string                 `json:"client_id"`
+			Action   string                 `json:"action"`
+			DeviceID string                 `json:"device_id"`
+			Meta     map[string]interface{} `json:"meta"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Fatalf("解析请求体失败: %v", err)
+		}
+		if body.ClientID != xunleiWebClientID || body.DeviceID != xunleiWebDeviceID {
+			t.Fatalf("captcha 身份不正确: %#v", body)
+		}
+		if body.Action != xunleiDefaultCaptchaAction {
+			t.Fatalf("action = %q", body.Action)
+		}
+		if body.Meta["package_name"] != xunleiWebPackageName || body.Meta["client_version"] != xunleiWebClientVersion {
+			t.Fatalf("captcha meta 客户端信息不正确: %#v", body.Meta)
+		}
+		if body.Meta["captcha_sign"] != xunleiWebCaptchaSign || body.Meta["timestamp"] != xunleiWebCaptchaTimestamp {
+			t.Fatalf("captcha meta 签名不正确: %#v", body.Meta)
+		}
+		if body.Meta["user_id"] != "0" {
+			t.Fatalf("user_id = %#v", body.Meta["user_id"])
+		}
+		return jsonResponse(`{"captcha_token":"captcha","expires_in":300}`), nil
+	})}
+
+	token, err := svc.getCaptchaToken()
+	if err != nil {
+		t.Fatalf("getCaptchaToken error: %v", err)
 	}
-	want = "1." + want
-	got := xlSignWithTimestamp(p, deviceID, timestamp)
-	if got != want {
-		t.Fatalf("签名算法与参考不一致:\n want=%s\n got =%s", want, got)
+	if token != "captcha" || svc.extra.Captcha == nil || svc.extra.Captcha.CaptchaToken != "captcha" {
+		t.Fatalf("captcha 状态未缓存: %#v", svc.extra.Captcha)
 	}
 }
 
-// TestXLProfileByType 验证 profile 选择（默认 android）。
-func TestXLProfileByType(t *testing.T) {
-	if xlProfileByType("browser").ClientID != xlProfileBrowser.ClientID {
-		t.Fatal("browser 类型应返回浏览器 profile")
+func TestRequestXunleiApiRefreshesCaptchaForRejectedAction(t *testing.T) {
+	svc := NewXunleiPanService(nil)
+	svc.extra.Token = &XunleiTokenData{UserId: "user-1"}
+	svc.extra.Captcha = &CaptchaData{CaptchaToken: "stale-captcha"}
+	apiAttempts := 0
+	svc.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case "https://api-pan.xunlei.com/drive/v1/files":
+			apiAttempts++
+			if apiAttempts == 1 {
+				if req.Header.Get("x-captcha-token") != "stale-captcha" {
+					t.Fatalf("首次 captcha token = %q", req.Header.Get("x-captcha-token"))
+				}
+				return jsonResponseWithStatus(http.StatusBadRequest, `{"error":"captcha_invalid","error_code":9}`), nil
+			}
+			if req.Header.Get("x-captcha-token") != "fresh-captcha" {
+				t.Fatalf("重试 captcha token = %q", req.Header.Get("x-captcha-token"))
+			}
+			return jsonResponse(`{"id":"folder-1"}`), nil
+		case xunleiCaptchaInitURL:
+			var body struct {
+				Action       string                 `json:"action"`
+				CaptchaToken string                 `json:"captcha_token"`
+				Meta         map[string]interface{} `json:"meta"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				t.Fatalf("解析 captcha 请求失败: %v", err)
+			}
+			if body.Action != "POST:/drive/v1/files" {
+				t.Fatalf("action = %q", body.Action)
+			}
+			if body.CaptchaToken != "stale-captcha" || body.Meta["user_id"] != "user-1" {
+				t.Fatalf("captcha 刷新上下文不正确: %#v", body)
+			}
+			return jsonResponse(`{"captcha_token":"fresh-captcha","expires_in":300}`), nil
+		default:
+			t.Fatalf("未预期请求: %s", req.URL)
+			return nil, nil
+		}
+	})}
+
+	result, err := svc.requestXunleiApi(
+		"https://api-pan.xunlei.com/drive/v1/files",
+		http.MethodPost,
+		map[string]interface{}{"kind": "drive#folder"},
+		nil,
+		map[string]string{"x-captcha-token": "stale-captcha"},
+	)
+	if err != nil {
+		t.Fatalf("requestXunleiApi error: %v", err)
 	}
-	if xlProfileByType("android").ClientID != xlProfileAndroid.ClientID {
-		t.Fatal("android 类型应返回下载管家 profile")
-	}
-	if xlProfileByType("").ClientID != xlProfileAndroid.ClientID {
-		t.Fatal("空类型应默认返回下载管家 profile（向后兼容）")
+	if result["id"] != "folder-1" || apiAttempts != 2 {
+		t.Fatalf("result=%#v attempts=%d", result, apiAttempts)
 	}
 }
 
-// TestDeriveDeviceID 验证设备标识派生：稳定、独立、32 位 hex（R-05）。
-func TestDeriveDeviceID(t *testing.T) {
-	d1 := deriveDeviceID("user1", "pass1")
-	if d1 != deriveDeviceID("user1", "pass1") {
-		t.Fatal("相同账号应派生相同设备标识")
+func TestParseXunleiRefreshToken(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "raw", value: " a1.raw-token ", want: "a1.raw-token"},
+		{name: "legacy json", value: `{"refresh_token":"a1.legacy","client_type":"android"}`, want: "a1.legacy"},
+		{name: "extra json", value: `{"token":{"refresh_token":"a1.extra"}}`, want: "a1.extra"},
 	}
-	if len(d1) != 32 {
-		t.Fatalf("设备标识应为 32 位，实际: %d", len(d1))
-	}
-	if _, err := hex.DecodeString(d1); err != nil {
-		t.Fatalf("设备标识应为合法十六进制: %v", err)
-	}
-	if deriveDeviceID("user2", "pass2") == d1 {
-		t.Fatal("不同账号应派生不同设备标识")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseXunleiRefreshToken(tt.value)
+			if err != nil {
+				t.Fatalf("ParseXunleiRefreshToken error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

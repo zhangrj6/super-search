@@ -14,7 +14,7 @@
 
     <!-- 顶部导航栏 -->
     <header class="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
-      <div class="flex items-center justify-between px-6 py-4">
+      <div class="flex items-center justify-between px-3 py-3 sm:px-6 sm:py-4">
         <!-- 左侧：Logo和标题 -->
         <div class="flex items-center">
           <!-- 窄屏：侧边栏抽屉触发按钮（≤767px 显示） -->
@@ -31,10 +31,10 @@
               <i class="fas fa-shield-alt text-white text-sm"></i>
             </div>
             <div class="flex items-center space-x-2">
-              <h1 class="text-xl font-bold text-gray-900 dark:text-white">管理后台</h1>
+              <h1 class="hidden text-xl font-bold text-gray-900 dark:text-white sm:block">管理后台</h1>
               <NuxtLink
                 to="/admin/version"
-                class="text-xs text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                class="hidden text-xs text-gray-500 transition-colors hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 sm:block"
               >
                 v{{ versionInfo.version }}
               </NuxtLink>
@@ -57,7 +57,7 @@
           </button>
 
           <!-- 自动处理状态 -->
-          <div class="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 rounded-lg px-3 py-2">
+          <div class="hidden items-center gap-2 rounded-lg bg-gray-100 px-3 py-2 dark:bg-gray-700 lg:flex">
             <div class="w-2 h-2 rounded-full animate-pulse" :class="{
               'bg-red-400': !isAutoProcessEnabled,
               'bg-green-400': isAutoProcessEnabled,
@@ -68,7 +68,7 @@
           </div>
 
           <!-- 自动转存状态 -->
-          <div class="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 rounded-lg px-3 py-2">
+          <div class="hidden items-center gap-2 rounded-lg bg-gray-100 px-3 py-2 dark:bg-gray-700 lg:flex">
             <div class="w-2 h-2 rounded-full animate-pulse" :class="{
               'bg-red-400': !isAutoTransferEnabled,
               'bg-green-400': isAutoTransferEnabled,

@@ -77,6 +77,14 @@ export const adminNewNavigationItems = [
     group: 'operation'
   },
   {
+    key: 'transfer-records',
+    label: '转存链路记录',
+    icon: 'fas fa-route',
+    to: '/admin/transfer-records',
+    active: (route: any) => route.path.startsWith('/admin/transfer-records'),
+    group: 'operation'
+  },
+  {
     key: 'tasks',
     label: '任务管理',
     icon: 'fas fa-tasks',
@@ -195,4 +203,4 @@ export const adminNewMenuItems = [
     icon: 'fas fa-sign-out-alt',
     action: 'logout'
   }
-] 
+]

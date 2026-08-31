@@ -59,11 +59,12 @@ export function useApiFetch<T = any>(
         throw new Error(response._data.message || '请求失败')
       }
     },
-    onResponseError({ error }: { error: any }) {
-      console.log('error', error)
-      
+    onResponseError({ response }: { response: any }) {
+      const data = response?._data
+      const status = response?.status
+
       // 检查是否为"无效的令牌"错误
-      if (error?.data?.error === '无效的令牌') {
+      if (data?.error === '无效的令牌' || status === 401) {
         // 清除用户状态
         userStore.logout()
         // 跳转到登录页面
@@ -74,14 +75,22 @@ export function useApiFetch<T = any>(
       }
       
       // 检查是否为权限错误
-      if (error?.data?.error === '需要管理员权限' || error?.status === 403) {
+      if (data?.error === '需要管理员权限' || status === 403) {
         throw new Error('需要管理员权限，请使用管理员账号登录')
       }
-      
-      // 统一错误提示
-      // 你可以用 naive-ui 的 useMessage() 这里弹窗
-      // useMessage().error(error.message)
-      throw error
+
+      // ofetch 的 onResponseError 上下文没有 error 字段。始终抛出标准
+      // Error，避免 Nuxt useAsyncData 收到 undefined 后再次包装时报错。
+      const responseMessage = typeof data === 'object' && data
+        ? data.message || data.error
+        : typeof data === 'string'
+          ? data.trim()
+          : ''
+      const message = responseMessage || response?.statusText || `请求失败（HTTP ${status || '未知'}）`
+      throw Object.assign(new Error(message), { data, status })
+    },
+    onRequestError({ error }: { error: any }) {
+      throw error instanceof Error ? error : new Error('网络连接失败，请检查后端服务')
     }
   })
-} 
+}

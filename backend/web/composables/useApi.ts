@@ -313,6 +313,13 @@ export const useTaskApi = () => {
   return { createBatchTransferTask, createExpansionTask, getExpansionAccounts, getTasks, getTaskStatus, startTask, stopTask, pauseTask, deleteTask, getTaskItems, getExpansionOutput }
 }
 
+export const useTransferRecordApi = () => {
+  const getTransferRecords = (params?: any) => useApiFetch('/transfer-records', { params }).then(parseApiResponse)
+  const getTransferRecord = (id: number) => useApiFetch(`/transfer-records/${id}`).then(parseApiResponse)
+  const getTransferRecordSummary = () => useApiFetch('/transfer-records/summary').then(parseApiResponse)
+  return { getTransferRecords, getTransferRecord, getTransferRecordSummary }
+}
+
 // 日志函数：只在开发环境打印
 function log(...args: any[]) {
   if (process.env.NODE_ENV !== 'production') {

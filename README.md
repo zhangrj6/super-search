@@ -12,14 +12,22 @@ created only when a visitor requests it from the resource detail page.
 
 ## Search flow
 
-1. `POST /api/search` searches melost.cn.
+1. `POST /api/search` searches melost.cn for resource mode. With
+   `search_type: "video"`, URLDB concurrently reads the Quark (`is_type=0`)
+   and Xunlei (`is_type=4`) SSE streams from xusou.cn, merges the results, and
+   paginates the combined list before returning JSON.
 2. Clicking a result calls `POST /api/resources/stage` and stores metadata only.
 3. The resource detail page reads the staged resource by its public key.
 4. `GET /api/resources/:id/link` transfers the resource and returns only the new
    share link.
 
-Visitors do not need to sign in. Original melost share links are not returned by
-the public detail or transfer APIs.
+Visitors do not need to sign in. Original links from melost and xusou are not
+returned by the public detail or transfer APIs.
+
+For xusou video results, the returned `link` is a temporary encoded value. The
+stage request carries `source: "xusou"`; URLDB resolves it through xusou's
+`save_url` endpoint only after the visitor clicks to get a link, then continues
+through the existing staging and transfer/share flow.
 
 ## Run with Docker
 
