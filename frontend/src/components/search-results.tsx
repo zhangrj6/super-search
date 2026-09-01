@@ -318,11 +318,11 @@ export function SearchResults({
         </div>
 
         <Tabs
-          className="w-full min-w-0 overflow-hidden"
+          className="h-11 w-full min-w-0 shrink-0 overflow-hidden"
           value={provider}
           onValueChange={handleProviderChange}
         >
-          <div className="mx-auto w-full min-w-0 max-w-5xl overflow-x-auto px-5 sm:px-8">
+          <div className="mx-auto h-11 max-h-11 w-full min-w-0 max-w-5xl overflow-x-auto overflow-y-hidden overscroll-x-contain overscroll-y-none px-5 [touch-action:pan-x] sm:px-8">
             <TabsList
               className="h-11 min-w-max gap-0 bg-transparent p-0"
               variant="line"
