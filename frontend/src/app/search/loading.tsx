@@ -2,11 +2,17 @@
 
 import { SearchLoadingOverlay } from "@/components/search-loading-overlay";
 import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
+import type { SearchMode } from "@/lib/resources";
 
-export default function SearchLoading() {
+function SearchLoadingContent() {
   const searchParams = useSearchParams();
   const mode = searchParams.get("mode") === "video" ? "video" : "resource";
 
+  return <SearchLoadingSkeleton mode={mode} />;
+}
+
+function SearchLoadingSkeleton({ mode }: { mode: SearchMode }) {
   return (
     <div className="min-h-screen bg-transparent text-foreground" aria-busy="true">
       <SearchLoadingOverlay mode={mode} />
@@ -37,5 +43,13 @@ export default function SearchLoading() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function SearchLoading() {
+  return (
+    <Suspense fallback={<SearchLoadingSkeleton mode="resource" />}>
+      <SearchLoadingContent />
+    </Suspense>
   );
 }
