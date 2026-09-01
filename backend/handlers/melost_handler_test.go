@@ -31,13 +31,34 @@ func TestTransferServiceForURL(t *testing.T) {
 }
 
 func TestIsAllowedMelostType(t *testing.T) {
-	for _, value := range []string{"", "BDY", "ALY", "QUARK", "XUNLEI", "UC"} {
+	for _, value := range []string{"QUARK", "XUNLEI"} {
 		if !isAllowedMelostType(value) {
 			t.Fatalf("expected type %q to be allowed", value)
 		}
 	}
-	if isAllowedMelostType("MAGNET") {
-		t.Fatal("MAGNET should not be allowed because it cannot be transferred")
+	for _, value := range []string{"", "BDY", "ALY", "UC", "MAGNET"} {
+		if isAllowedMelostType(value) {
+			t.Fatalf("expected type %q to be rejected", value)
+		}
+	}
+}
+
+func TestXusouTypeForProvider(t *testing.T) {
+	tests := []struct {
+		provider string
+		wantType int
+		wantOK   bool
+	}{
+		{provider: "QUARK", wantType: 0, wantOK: true},
+		{provider: "quark", wantType: 0, wantOK: true},
+		{provider: "XUNLEI", wantType: 4, wantOK: true},
+		{provider: "BDY", wantType: 0, wantOK: false},
+	}
+	for _, test := range tests {
+		gotType, gotOK := xusouTypeForProvider(test.provider)
+		if gotType != test.wantType || gotOK != test.wantOK {
+			t.Fatalf("xusouTypeForProvider(%q) = (%d, %v), want (%d, %v)", test.provider, gotType, gotOK, test.wantType, test.wantOK)
+		}
 	}
 }
 

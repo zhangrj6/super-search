@@ -14,6 +14,7 @@ export interface MelostSearchItem {
   size: number
   can_stage: boolean
   stage_message?: string
+  source?: string
 }
 
 export interface MelostSearchResponse {
@@ -33,13 +34,13 @@ export interface MelostStageResponse {
 
 export const useMelostApi = () => {
   const search = (query: string, page = 1, size = 20, type = '') =>
-    useApiFetch('/melost/search', {
+    useApiFetch('/search', {
       method: 'POST',
       body: { q: query, type, page, size }
     }).then(parseApiResponse<MelostSearchResponse>)
 
   const stageResource = (item: MelostSearchItem) =>
-    useApiFetch('/melost/resources', {
+    useApiFetch('/resources/stage', {
       method: 'POST',
       body: {
         doc_id: item.doc_id,
@@ -51,7 +52,8 @@ export const useMelostApi = () => {
         tags: item.tags,
         shared_time: item.shared_time,
         share_user: item.share_user,
-        size: item.size
+        size: item.size,
+        source: item.source
       }
     }).then(parseApiResponse<MelostStageResponse>)
 

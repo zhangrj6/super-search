@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,19 +21,7 @@ type CaptchaData struct {
 	ExpiresAt    int64  `json:"expires_at"`
 }
 
-// XunleiReviewError 账号密码登录触发迅雷新设备安全验证（review）。
-// 携带 creditkey 与验证链接，供上层透传给前端走 creditkey 闭环（对齐 OpenList）。
-type XunleiReviewError struct {
-	Creditkey string
-	ReviewURL string
-	DeviceID  string
-}
-
-func (e *XunleiReviewError) Error() string {
-	return "迅雷账号需要安全验证（review），请打开验证链接完成短信验证，并将 creditkey 填入后重试"
-}
-
-// XunleiExtraData 所有额外数据的容器
+// XunleiTokenData stores the OAuth token returned by the Xunlei web client.
 type XunleiTokenData struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -44,28 +33,25 @@ type XunleiTokenData struct {
 }
 
 type XunleiExtraData struct {
-	Captcha     *CaptchaData              `json:"captcha,omitempty"`
-	Token       *XunleiTokenData          `json:"token,omitempty"`
-	Credentials *XunleiAccountCredentials `json:"credentials,omitempty"` // 账号密码信息
+	AuthClientID string           `json:"auth_client_id,omitempty"`
+	Captcha      *CaptchaData     `json:"captcha,omitempty"`
+	Token        *XunleiTokenData `json:"token,omitempty"`
 }
 
 type XunleiPanService struct {
 	*BasePanService
 	configMutex sync.RWMutex
-	clientId    string
-	deviceId    string
-	profile     xunleiProfile // 身份配置（android/browser），按账号 client_type 切换
 	entity      entity.Cks
 	cksRepo     repo.CksRepository
 	extra       XunleiExtraData // 需要保存到数据库的token信息
 }
 
-// 配置化 API Host（网盘 API host 按 profile：下载管家 api-pan / 浏览器 x-api-pan）
+// apiHost returns the web API host used by pan.xunlei.com.
 func (x *XunleiPanService) apiHost(apiType string) string {
 	if apiType == "user" {
 		return "https://xluser-ssl.xunlei.com"
 	}
-	return x.profile.PanAPIHost
+	return "https://api-pan.xunlei.com"
 }
 
 func (x *XunleiPanService) setCommonHeader(req *http.Request) {
@@ -78,12 +64,10 @@ func (x *XunleiPanService) setCommonHeader(req *http.Request) {
 func NewXunleiPanService(config *PanConfig) *XunleiPanService {
 	xunleiInstance := &XunleiPanService{
 		BasePanService: NewBasePanService(config),
-		profile:        xlProfileAndroid, // 默认下载管家；按账号 client_type 切换（SetClientType）
-		// 占位默认设备标识；实际按账号派生（见 SetCKSRepository / LoginByRefreshToken，R-05）
-		deviceId: deriveDeviceID("urldb", "xunlei"),
-		extra:    XunleiExtraData{},
+		extra: XunleiExtraData{
+			AuthClientID: xunleiWebClientID,
+		},
 	}
-	xunleiInstance.clientId = xunleiInstance.profile.ClientID
 	xunleiInstance.SetHeaders(map[string]string{
 		"Accept":          "*/*",
 		"Accept-Language": "zh-CN,zh;q=0.9",
@@ -92,29 +76,21 @@ func NewXunleiPanService(config *PanConfig) *XunleiPanService {
 		"Origin":          "https://pan.xunlei.com",
 		"Pragma":          "no-cache",
 		"Referer":         "https://pan.xunlei.com/",
-		"User-Agent":      xunleiInstance.profile.UserAgent,
+		"User-Agent":      xunleiWebUserAgent,
 		"Authorization":   "",
 		"x-captcha-token": "",
-		"x-client-id":     xunleiInstance.clientId,
-		"x-device-id":     xunleiInstance.deviceId,
+		"x-client-id":     xunleiWebClientID,
+		"x-device-id":     xunleiWebDeviceID,
 	})
 
 	xunleiInstance.UpdateConfig(config)
 	return xunleiInstance
 }
 
-// SetClientType 按账号 client_type（android/browser）切换身份 profile，并同步请求头。
-func (x *XunleiPanService) SetClientType(clientType string) {
-	x.profile = xlProfileByType(clientType)
-	x.clientId = x.profile.ClientID
-	x.SetHeader("x-client-id", x.profile.ClientID)
-	x.SetHeader("User-Agent", x.profile.UserAgent)
-}
-
 // SetCKSRepository 设置 CksRepository 和 entity
-func (x *XunleiPanService) SetCKSRepository(cksRepo repo.CksRepository, entity entity.Cks) {
+func (x *XunleiPanService) SetCKSRepository(cksRepo repo.CksRepository, cksEntity entity.Cks) {
 	x.cksRepo = cksRepo
-	x.entity = entity
+	x.entity = cksEntity
 	var extra XunleiExtraData
 
 	// 解析extra字段
@@ -124,17 +100,17 @@ func (x *XunleiPanService) SetCKSRepository(cksRepo repo.CksRepository, entity e
 		}
 	}
 
-	// 从ck字段解析凭据，按 client_type 切换身份 profile，并按账号派生稳定设备标识（R-05）
-	if credentials, err := ParseCredentialsFromCk(x.entity.Ck); err == nil {
-		extra.Credentials = credentials
-		// 按 client_type 选择身份（默认 android，向后兼容已有账号）
-		x.SetClientType(credentials.ClientType)
-		if credentials.Username != "" {
-			x.deviceId = deriveDeviceID(credentials.Username, credentials.Password)
-			x.SetHeader("x-device-id", x.deviceId)
-		}
+	refreshToken, _ := ParseXunleiRefreshToken(x.entity.Ck)
+	identityChanged := extra.AuthClientID != xunleiWebClientID
+	credentialChanged := refreshToken != "" && extra.Token != nil && refreshToken != extra.Token.RefreshToken
+	if identityChanged || credentialChanged {
+		extra.Token = nil
+		extra.Captcha = nil
 	}
-
+	if refreshToken != "" && extra.Token == nil {
+		extra.Token = &XunleiTokenData{RefreshToken: refreshToken}
+	}
+	extra.AuthClientID = xunleiWebClientID
 	x.extra = extra
 }
 
@@ -166,10 +142,9 @@ func (x *XunleiPanService) GetAccessTokenByRefreshToken(refreshToken string) (Xu
 	body := map[string]interface{}{
 		"grant_type":    "refresh_token",
 		"refresh_token": refreshToken,
-		"client_id":     x.profile.ClientID,
-		"client_secret": x.profile.ClientSecret,
+		"client_id":     xunleiWebClientID,
 	}
-	resp, err := x.sendXunleiAuthRequest("https://xluser-ssl.xunlei.com/v1/auth/token", body, nil)
+	resp, err := x.sendXunleiAuthRequest(xunleiAuthTokenURL, body, nil)
 	if err != nil {
 		return XunleiTokenData{}, fmt.Errorf("刷新 access_token 请求失败: %v", err)
 	}
@@ -201,22 +176,8 @@ func (x *XunleiPanService) GetAccessTokenByRefreshToken(refreshToken string) (Xu
 	}, nil
 }
 
-// reloginWithCredentials 使用账号密码重新登录
-func (x *XunleiPanService) reloginWithCredentials() (XunleiTokenData, error) {
-	if x.extra.Credentials == nil {
-		return XunleiTokenData{}, fmt.Errorf("无账号密码信息")
-	}
-
-	tokenData, err := x.LoginWithCredentials(x.extra.Credentials.Username, x.extra.Credentials.Password, x.extra.Credentials.Creditkey)
-	if err != nil {
-		return XunleiTokenData{}, fmt.Errorf("账号密码登录失败: %v", err)
-	}
-
-	log.Printf("账号 %s 重新登录成功", x.extra.Credentials.Username)
-	return tokenData, nil
-}
-
-// getAccessToken 获取 Access Token（内部包含缓存判断、刷新、重新登录、保存）
+// getAccessToken returns a cached access token or refreshes it with the stored
+// pan.xunlei.com refresh_token.
 func (x *XunleiPanService) getAccessToken() (string, error) {
 	// 检查 Access Token 是否有效
 	currentTime := time.Now().Unix()
@@ -224,27 +185,12 @@ func (x *XunleiPanService) getAccessToken() (string, error) {
 		return x.extra.Token.AccessToken, nil
 	}
 
-	// 尝试使用refresh_token刷新
-	var newData XunleiTokenData
-	var err error
-
-	if x.extra.Token != nil && x.extra.Token.RefreshToken != "" {
-		newData, err = x.GetAccessTokenByRefreshToken(x.extra.Token.RefreshToken)
-		if err != nil {
-			log.Printf("refresh_token刷新失败: %v，尝试使用账号密码重新登录", err)
-
-			// 如果refresh_token失效且有账号密码信息，尝试重新登录
-			if x.extra.Credentials != nil && x.extra.Credentials.Username != "" && x.extra.Credentials.Password != "" {
-				newData, err = x.reloginWithCredentials()
-				if err != nil {
-					return "", fmt.Errorf("重新登录失败: %v", err)
-				}
-			} else {
-				return "", fmt.Errorf("refresh_token失效且无账号密码信息，无法重新登录: %v", err)
-			}
-		}
-	} else {
+	if x.extra.Token == nil || x.extra.Token.RefreshToken == "" {
 		return "", fmt.Errorf("无有效的refresh_token")
+	}
+	newData, err := x.GetAccessTokenByRefreshToken(x.extra.Token.RefreshToken)
+	if err != nil {
+		return "", fmt.Errorf("refresh_token 刷新失败: %w", err)
 	}
 
 	// 更新token信息
@@ -274,32 +220,40 @@ func (x *XunleiPanService) Keepalive() error {
 	return nil
 }
 
-// getCaptchaToken 获取 captcha_token（登录后阶段）。
-// 登录后阶段需要 user_id（取自令牌）+ 动态 captcha_sign（基于实时时间戳，R-04/R-06）。
+// getCaptchaToken returns the cached captcha token or initializes one with the
+// fixed pan.xunlei.com web-client payload.
 func (x *XunleiPanService) getCaptchaToken() (string, error) {
 	currentTime := time.Now().Unix()
 	if x.extra.Captcha != nil && x.extra.Captcha.CaptchaToken != "" && x.extra.Captcha.ExpiresAt > currentTime {
 		return x.extra.Captcha.CaptchaToken, nil
 	}
 
-	// user_id 取自令牌（登录后才有）
-	userID := ""
+	return x.captchaInit(xunleiDefaultCaptchaAction, "0")
+}
+
+func (x *XunleiPanService) refreshCaptchaTokenForRequest(method, requestURL string) (string, error) {
+	parsedURL, err := url.Parse(requestURL)
+	if err != nil || parsedURL.Path == "" {
+		return "", fmt.Errorf("无法生成 captcha action: %s", requestURL)
+	}
+	userID := "0"
 	if x.extra.Token != nil {
-		userID = x.extra.Token.UserId
-		if userID == "" {
+		if x.extra.Token.UserId != "" {
+			userID = x.extra.Token.UserId
+		} else if x.extra.Token.Sub != "" {
 			userID = x.extra.Token.Sub
 		}
 	}
+	return x.captchaInit(strings.ToUpper(method)+":"+parsedURL.Path, userID)
+}
 
-	ts, sign := x.captchaSign()
-	meta := map[string]string{
-		"client_version": x.profile.ClientVersion,
-		"package_name":   x.profile.PackageName,
-		"user_id":        userID,
-		"timestamp":      ts,
-		"captcha_sign":   sign,
+func isXunleiCaptchaInvalid(err error) bool {
+	if err == nil {
+		return false
 	}
-	return x.captchaInit("GET:/drive/v1/share", meta)
+	message := err.Error()
+	return strings.Contains(message, `"error":"captcha_invalid"`) ||
+		strings.Contains(message, `"error_code":9`)
 }
 
 // requestXunleiApi 迅雷 API 通用请求方法 - 使用 BasePanService 方法
@@ -324,15 +278,28 @@ func (x *XunleiPanService) requestXunleiApi(url string, method string, data map[
 		}
 	}()
 
-	// 根据方法调用相应的 BasePanService 方法
-	if method == "GET" {
-		respData, err = x.HTTPGet(url, queryParams)
-	} else if method == "POST" {
-		respData, err = x.HTTPPost(url, data, queryParams)
-	} else {
+	execute := func() ([]byte, error) {
+		if method == "GET" {
+			return x.HTTPGet(url, queryParams)
+		}
+		if method == "POST" {
+			return x.HTTPPost(url, data, queryParams)
+		}
 		return nil, fmt.Errorf("不支持的HTTP方法: %s", method)
 	}
 
+	respData, err = execute()
+	if isXunleiCaptchaInvalid(err) {
+		captchaToken, refreshErr := x.refreshCaptchaTokenForRequest(method, url)
+		if refreshErr != nil {
+			return nil, fmt.Errorf("刷新 captcha_token 失败: %w", refreshErr)
+		}
+		if headers != nil {
+			headers["x-captcha-token"] = captchaToken
+		}
+		x.SetHeader("x-captcha-token", captchaToken)
+		respData, err = execute()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -438,10 +405,29 @@ func (x *XunleiPanService) Transfer(shareID string) (*TransferResult, error) {
 	// }
 
 	// 处理广告过滤（这里简化处理）
-	// TODO: 添加广告文件过滤逻辑
+	sourceFileIDs := make([]string, 0)
+	if files, ok := shareDetail["files"].([]interface{}); ok {
+		for _, file := range files {
+			fileMap, ok := file.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			name, _ := fileMap["name"].(string)
+			if name != "" && containsAdKeywords(name) {
+				log.Printf("[xunlei] 源分享文件命中广告规则，跳过转存: %s", name)
+				continue
+			}
+			if id, ok := fileMap["id"].(string); ok && id != "" {
+				sourceFileIDs = append(sourceFileIDs, id)
+			}
+		}
+	}
+	if len(sourceFileIDs) == 0 {
+		return ErrorResult("分享内文件均被广告规则过滤"), nil
+	}
 
 	// 转存资源
-	restoreResult, err := x.getRestore(shareID, shareDetail, accessToken, captchaToken, parent_id)
+	restoreResult, err := x.getRestore(shareID, shareDetail, sourceFileIDs, accessToken, captchaToken, parent_id)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("转存失败: %v", err)), nil
 	}
@@ -495,6 +481,9 @@ func (x *XunleiPanService) Transfer(shareID string) (*TransferResult, error) {
 		}
 	}
 	log.Printf("迅雷转存 file_ids 提取结果: %v (taskResp params: %+v)", existingFileIds, taskResp["params"])
+	if len(existingFileIds) == 0 {
+		return ErrorResult("转存完成但未获取到文件标识"), nil
+	}
 
 	// 创建分享链接
 	expirationDays := "-1"
@@ -503,7 +492,15 @@ func (x *XunleiPanService) Transfer(shareID string) (*TransferResult, error) {
 	}
 
 	// 根据share_id获取到分享链接
-	shareResult, err := x.getSharePassword(existingFileIds, accessToken, captchaToken, expirationDays)
+	promoFID, err := x.ensureTransferPromoFolder(accessToken, captchaToken)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("创建推广文件夹失败: %v", err)), nil
+	}
+	shareFileIDs, err := appendPanFID(existingFileIds, promoFID)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("添加推广文件夹失败: %v", err)), nil
+	}
+	shareResult, err := x.getSharePassword(shareFileIDs, accessToken, captchaToken, expirationDays)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("创建分享链接失败: %v", err)), nil
 	}
@@ -592,18 +589,7 @@ func (x *XunleiPanService) getShare(shareID, passCode, accessToken, captchaToken
 }
 
 // getRestore 转存到网盘 - 匹配 PHP 版本
-func (x *XunleiPanService) getRestore(shareID string, infoData map[string]interface{}, accessToken, captchaToken, parentID string) (map[string]interface{}, error) {
-	ids := make([]string, 0)
-	if files, ok := infoData["files"].([]interface{}); ok {
-		for _, file := range files {
-			if fileMap, ok2 := file.(map[string]interface{}); ok2 {
-				if id, ok3 := fileMap["id"].(string); ok3 {
-					ids = append(ids, id)
-				}
-			}
-		}
-	}
-
+func (x *XunleiPanService) getRestore(shareID string, infoData map[string]interface{}, ids []string, accessToken, captchaToken, parentID string) (map[string]interface{}, error) {
 	passCodeToken := ""
 	if token, ok := infoData["pass_code_token"]; ok {
 		if tokenStr, ok2 := token.(string); ok2 {
@@ -853,6 +839,9 @@ func (x *XunleiPanService) GetUserInfo(cookie *string) (*UserInfo, error) {
 	}
 	userInfo.ServiceType = x.GetServiceType().String()
 	userInfo.VIPStatus = isVip
+	if extraData, err := json.Marshal(x.extra); err == nil {
+		userInfo.ExtraData = string(extraData)
+	}
 	return userInfo, nil
 }
 
@@ -903,21 +892,111 @@ func (x *XunleiPanService) FileBatchShare(ids []string, needPassword bool, expir
 // Share 对系统已存文件按 fid 重新生成迅雷分享链接（实现 Sharer，FR-015）。
 // expiration_days=0 表示永久分享（迅雷语义）。失败时由调用方（决策树）回退到「判原始→转存」。
 func (x *XunleiPanService) Share(fid string) (*TransferResult, error) {
-	if fid == "" {
+	fileIDs := splitPanFIDs(fid)
+	if len(fileIDs) == 0 {
 		return &TransferResult{Success: false, Message: "fid 为空"}, nil
 	}
-	resp, err := x.FileBatchShare([]string{fid}, false, 0)
+	accessToken, err := x.getAccessToken()
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("获取accessToken失败: %v", err)}, nil
+	}
+	captchaToken, err := x.getCaptchaToken()
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("获取captchaToken失败: %v", err)}, nil
+	}
+	promoFID, err := x.ensureTransferPromoFolder(accessToken, captchaToken)
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("创建推广文件夹失败: %v", err)}, nil
+	}
+	shareFileIDs, err := appendPanFID(fileIDs, promoFID)
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("添加推广文件夹失败: %v", err)}, nil
+	}
+	resp, err := x.getSharePassword(shareFileIDs, accessToken, captchaToken, "-1")
 	if err != nil {
 		return &TransferResult{Success: false, Message: fmt.Sprintf("创建分享失败: %v", err)}, nil
 	}
-	if resp == nil || resp.Code != 0 || resp.Data.ShareURL == "" {
-		msg := "创建分享失败"
-		if resp != nil && resp.Msg != "" {
-			msg = resp.Msg
-		}
-		return &TransferResult{Success: false, Message: msg}, nil
+	shareURL, _ := resp["share_url"].(string)
+	passCode, _ := resp["pass_code"].(string)
+	if shareURL == "" {
+		return &TransferResult{Success: false, Message: "创建分享未返回链接"}, nil
 	}
-	return &TransferResult{Success: true, ShareURL: resp.Data.ShareURL, Fid: fid}, nil
+	if passCode != "" {
+		shareURL += "?pwd=" + passCode
+	}
+	return &TransferResult{Success: true, ShareURL: shareURL, Fid: fid}, nil
+}
+
+// ensureTransferPromoFolder 确保迅雷账号根目录存在固定推广文件夹。
+func (x *XunleiPanService) ensureTransferPromoFolder(accessToken, captchaToken string) (string, error) {
+	transferPromoFolderMu.Lock()
+	defer transferPromoFolderMu.Unlock()
+
+	headers := map[string]string{
+		"Authorization":   "Bearer " + accessToken,
+		"x-captcha-token": captchaToken,
+	}
+	findExisting := func() (string, error) {
+		pageToken := ""
+		for page := 0; page < 200; page++ {
+			query := map[string]string{
+				"parent_id": "", "page_token": pageToken, "space": "", "limit": "100",
+				"filters": `{"trashed":{"eq":false}}`, "with_audit": "true",
+			}
+			response, err := x.requestXunleiApi(x.apiHost("")+"/drive/v1/files", "GET", nil, query, headers)
+			if err != nil {
+				return "", err
+			}
+			container := response
+			if data, ok := response["data"].(map[string]interface{}); ok {
+				container = data
+			}
+			if files, ok := container["files"].([]interface{}); ok {
+				for _, item := range files {
+					file, ok := item.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					name, _ := file["name"].(string)
+					kind, _ := file["kind"].(string)
+					if name == transferPromoFolderName && kind == "drive#folder" {
+						if id, ok := file["id"].(string); ok && id != "" {
+							return id, nil
+						}
+					}
+				}
+			}
+			next, _ := container["next_page_token"].(string)
+			if next == "" || next == pageToken {
+				return "", nil
+			}
+			pageToken = next
+		}
+		return "", fmt.Errorf("迅雷根目录超过分页上限")
+	}
+	if fid, err := findExisting(); err != nil {
+		return "", fmt.Errorf("检查迅雷根目录失败: %w", err)
+	} else if fid != "" {
+		return fid, nil
+	}
+	response, err := x.requestXunleiApi(x.apiHost("")+"/drive/v1/files", "POST", map[string]interface{}{
+		"kind": "drive#folder", "name": transferPromoFolderName, "parent_id": "", "space": "",
+	}, nil, headers)
+	if err == nil {
+		container := response
+		if data, ok := response["data"].(map[string]interface{}); ok {
+			container = data
+		}
+		if fid, ok := container["id"].(string); ok && fid != "" {
+			log.Printf("[xunlei] 已创建根目录推广文件夹 name=%s fid=%s", transferPromoFolderName, fid)
+			return fid, nil
+		}
+		err = fmt.Errorf("创建接口未返回文件夹 ID")
+	}
+	if fid, findErr := findExisting(); findErr == nil && fid != "" {
+		return fid, nil
+	}
+	return "", fmt.Errorf("创建迅雷推广文件夹失败: %v", err)
 }
 
 // ShareBatchDelete 取消分享（使用 BasePanService）

@@ -296,7 +296,7 @@
               <ul class="list-disc list-inside ml-4 mt-1 space-y-1">
                 <li>点击"添加属性"</li>
                 <li>选择"网址前缀"（推荐）或"网域"</li>
-                <li>输入您的网站URL（如：https://pan.l9.lc）</li>
+                <li>输入您的网站URL（如：https://52juyou.com）</li>
                 <li>选择验证方法（DNS记录、HTML文件上传、HTML标签或Google Analytics）</li>
                 <li>按照指示完成验证</li>
               </ul>

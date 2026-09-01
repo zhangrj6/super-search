@@ -1,13 +1,16 @@
+# 基础镜像可在受限网络环境中通过 build-arg 切换镜像源。
+ARG ALPINE_IMAGE=alpine:latest
+
 # 前端构建阶段
 FROM node:20-slim AS frontend-builder
 
-# 安装pnpm
 WORKDIR /app/web
 COPY web/ ./
-RUN npm install --frozen-lockfile --legacy-peer-deps
+RUN corepack enable && corepack prepare pnpm@9.13.0 --activate
+RUN pnpm install --frozen-lockfile
 ARG NUXT_PUBLIC_API_SERVER=http://backend:8080/api
-ARG NUXT_PUBLIC_API_CLIENT=/api
-RUN npm run build
+ARG NUXT_PUBLIC_API_BASE=/api
+RUN pnpm build
 
 # 前端运行阶段
 FROM node:20-alpine AS frontend
@@ -25,6 +28,8 @@ CMD ["node", ".output/server/index.mjs"]
 FROM golang:1.24.5-alpine AS backend-builder
 
 WORKDIR /app
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -50,7 +55,7 @@ RUN VERSION=${VERSION:-$(cat VERSION)} && \
     -o main .
 
 # 后端运行阶段
-FROM alpine:latest AS backend
+FROM ${ALPINE_IMAGE} AS backend
 
 # 安装时区数据
 RUN apk add --no-cache tzdata
@@ -71,4 +76,4 @@ ENV TZ=Asia/Shanghai
 EXPOSE 8080
 
 # 运行应用
-CMD ["./main"] 
+CMD ["./main"]

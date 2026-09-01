@@ -26,19 +26,25 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchLoadingOverlay } from "@/components/search-loading-overlay";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  DEFAULT_SEARCH_MODE,
   inferResourceType,
   PROVIDER_CODES,
   PROVIDER_VALUES,
+  SEARCH_MODE_VALUES,
   providerFromDiskType,
   readApiData,
+  sanitizeResourceDisplayMessage,
+  sanitizeResourceDisplayText,
   type DriveProvider,
   type MelostSearchItem,
   type MelostSearchResponse,
   type MelostStageResponse,
   type Provider,
   type ResourceType,
+  type SearchMode,
 } from "@/lib/resources";
 import logo from "@/assets/logo.png";
 
@@ -72,27 +78,33 @@ function ResourceIcon({ type }: { type: ResourceType }) {
 
 function safeErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message.trim() : "";
-  return !message || /https?:\/\//i.test(message) ? fallback : message;
+  if (!message || /https?:\/\//i.test(message)) return fallback;
+  return sanitizeResourceDisplayMessage(message) || fallback;
 }
 
 type SearchResultsProps = {
   initialQuery: string;
   initialProvider: Provider;
+  initialMode: SearchMode;
   initialPage: number;
+  initialData: MelostSearchResponse | null;
 };
 
 export function SearchResults({
   initialQuery,
   initialProvider,
+  initialMode,
   initialPage,
+  initialData,
 }: SearchResultsProps) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState(initialQuery);
   const [provider, setProvider] = useState(initialProvider);
-  const [searchData, setSearchData] = useState<MelostSearchResponse | null>(null);
+  const [mode, setMode] = useState<SearchMode>(initialMode);
+  const [searchData, setSearchData] = useState<MelostSearchResponse | null>(initialData);
   const [searchError, setSearchError] = useState("");
-  const [isLoading, setIsLoading] = useState(Boolean(initialQuery));
+  const [isLoading, setIsLoading] = useState(Boolean(initialQuery && !initialData));
   const [reloadSequence, setReloadSequence] = useState(0);
   const [stageStates, setStageStates] = useState<Record<string, StageState>>({});
   const [dateSort, setDateSort] = useState<DateSort>("default");
@@ -105,17 +117,24 @@ export function SearchResults({
       return;
     }
 
+    if (initialData && reloadSequence === 0) {
+      setSearchData(initialData);
+      setIsLoading(false);
+      return;
+    }
+
     const controller = new AbortController();
     setIsLoading(true);
     setSearchError("");
     setStageStates({});
 
-    void fetch("/api/melost/search", {
+    void fetch("/api/search", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         q: initialQuery,
         type: PROVIDER_CODES[initialProvider],
+        search_type: initialMode,
         page: initialPage,
         size: 20,
       }),
@@ -133,18 +152,18 @@ export function SearchResults({
       });
 
     return () => controller.abort();
-  }, [initialPage, initialProvider, initialQuery, reloadSequence]);
+  }, [initialData, initialMode, initialPage, initialProvider, initialQuery, reloadSequence]);
 
-  function buildSearchUrl(nextQuery: string, nextProvider: Provider, nextPage = 1) {
-    const params = new URLSearchParams({ q: nextQuery });
-    if (nextProvider !== "全部") params.set("provider", nextProvider);
+  function buildSearchUrl(nextQuery: string, nextProvider: Provider, nextMode: SearchMode, nextPage = 1) {
+    const params = new URLSearchParams({ q: nextQuery, provider: nextProvider });
+    if (nextMode !== DEFAULT_SEARCH_MODE) params.set("mode", nextMode);
     if (nextPage > 1) params.set("page", String(nextPage));
     return `/search?${params.toString()}`;
   }
 
   function buildResourceUrl(key: string) {
-    const params = new URLSearchParams({ q: initialQuery });
-    if (provider !== "全部") params.set("provider", provider);
+    const params = new URLSearchParams({ q: initialQuery, provider });
+    if (mode !== DEFAULT_SEARCH_MODE) params.set("mode", mode);
     if (initialPage > 1) params.set("page", String(initialPage));
     return `/resource/${encodeURIComponent(key)}?${params.toString()}`;
   }
@@ -155,7 +174,7 @@ export function SearchResults({
       inputRef.current?.focus();
       return;
     }
-    startTransition(() => router.push(buildSearchUrl(nextQuery, provider)));
+    startTransition(() => router.push(buildSearchUrl(nextQuery, provider, mode)));
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -167,13 +186,22 @@ export function SearchResults({
     const nextProvider = value as Provider;
     setProvider(nextProvider);
     startTransition(() => {
-      router.replace(buildSearchUrl(initialQuery, nextProvider), { scroll: false });
+      router.replace(buildSearchUrl(initialQuery, nextProvider, mode), { scroll: false });
+    });
+  }
+
+  function handleModeChange(value: SearchMode) {
+    if (value === mode) return;
+    setMode(value);
+    setDateSort("default");
+    startTransition(() => {
+      router.replace(buildSearchUrl(initialQuery, provider, value), { scroll: false });
     });
   }
 
   function changePage(nextPage: number) {
     startTransition(() => {
-      router.push(buildSearchUrl(initialQuery, provider, nextPage));
+      router.push(buildSearchUrl(initialQuery, provider, mode, nextPage));
     });
   }
 
@@ -182,7 +210,7 @@ export function SearchResults({
   }
 
   async function stageResource(item: MelostSearchItem) {
-    const response = await fetch("/api/melost/resources", {
+    const response = await fetch("/api/resources/stage", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -196,6 +224,7 @@ export function SearchResults({
         shared_time: item.shared_time,
         share_user: item.share_user,
         size: item.size,
+        source: item.source,
       }),
     });
     const data = await readApiData<MelostStageResponse>(response);
@@ -238,9 +267,11 @@ export function SearchResults({
         return dateSort === "desc" ? rightValue - leftValue : leftValue - rightValue;
       });
   const dateSortLabel = dateSort === "default" ? "默认排序" : dateSort === "desc" ? "最新优先" : "最早优先";
+  const isOpening = Object.values(stageStates).some((state) => state.status === "opening");
 
   return (
     <div className="flex flex-col bg-transparent text-foreground">
+      {isLoading || isPending ? <SearchLoadingOverlay mode={mode} /> : isOpening ? <SearchLoadingOverlay mode={mode} variant="link" /> : null}
       <a
         className="fixed top-3 left-3 z-50 -translate-y-20 rounded-lg bg-foreground px-3 py-2 text-sm font-medium text-background transition-transform focus:translate-y-0"
         href="#result-list"
@@ -249,7 +280,7 @@ export function SearchResults({
       </a>
 
       <header className="sticky top-0 z-20 border-b border-border bg-background/90 backdrop-blur-xl">
-        <div className="mx-auto grid max-w-5xl grid-cols-[auto_1fr_auto] items-center gap-3 px-5 py-3 sm:gap-4 sm:px-8">
+        <div className="mx-auto grid max-w-5xl grid-cols-[auto_1fr] items-center gap-3 px-5 py-3 sm:gap-4 sm:px-8">
           <Link
             className="flex min-h-10 items-center gap-2.5 rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/25"
             href="/"
@@ -259,7 +290,7 @@ export function SearchResults({
           </Link>
 
           <form
-            className="col-span-3 row-start-2 min-w-0 sm:col-span-1 sm:row-start-auto"
+            className="col-span-2 row-start-2 min-w-0 sm:col-span-1 sm:row-start-auto"
             onSubmit={handleSubmit}
           >
             <label className="sr-only" htmlFor="results-query">
@@ -308,45 +339,62 @@ export function SearchResults({
             </div>
           </form>
 
-          <p className="text-xs whitespace-nowrap text-muted-foreground" role="status" aria-live="polite">
-            {isLoading ? (
-              "正在搜索"
-            ) : (
-              <><strong className="font-semibold text-foreground">{total.toLocaleString()}</strong> 个结果</>
-            )}
-          </p>
         </div>
 
-        <Tabs
-          className="w-full min-w-0 overflow-hidden"
-          value={provider}
-          onValueChange={handleProviderChange}
-        >
-          <div className="mx-auto w-full min-w-0 max-w-5xl overflow-x-auto px-5 sm:px-8">
-            <TabsList
-              className="h-11 min-w-max gap-0 bg-transparent p-0"
-              variant="line"
-              aria-label="按网盘来源筛选"
-            >
-              {PROVIDER_VALUES.map((item) => (
-                <TabsTrigger
-                  className="h-10 flex-none px-3.5 text-sm font-normal data-active:font-semibold data-active:text-primary sm:px-4"
-                  value={item}
-                  key={item}
-                  disabled={isPending}
-                >
-                  {item}
-                </TabsTrigger>
-              ))}
-            </TabsList>
+        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-3 px-5 pb-2 sm:px-8">
+          <div className="inline-flex min-h-10 items-center gap-1 rounded-lg border border-border bg-card p-1">
+            {SEARCH_MODE_VALUES.map((item) => (
+              <button
+                className={`min-h-8 rounded-md px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 ${mode === item ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                type="button"
+                key={item}
+                aria-pressed={mode === item}
+                disabled={isPending}
+                onClick={() => handleModeChange(item)}
+              >
+                {item === "resource" ? "资源" : "视频"}
+              </button>
+            ))}
           </div>
-        </Tabs>
+          <Tabs
+            className="min-w-0"
+            value={provider}
+            onValueChange={handleProviderChange}
+          >
+            <div className="w-full min-w-0 overflow-x-auto">
+              <TabsList
+                className="h-10 min-w-max gap-0 bg-transparent p-0"
+                variant="line"
+                aria-label={`按网盘来源筛选${mode === "video" ? "视频" : "资源"}`}
+              >
+                {PROVIDER_VALUES.map((item) => (
+                  <TabsTrigger
+                    className="h-9 flex-none px-3 text-xs font-normal data-active:font-semibold data-active:text-primary sm:px-3.5 sm:text-sm"
+                    value={item}
+                    key={item}
+                    disabled={isPending}
+                  >
+                    {item}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </div>
+          </Tabs>
+          <p
+            className="basis-full text-left text-xs whitespace-nowrap text-muted-foreground sm:ml-auto sm:basis-auto sm:shrink-0 sm:text-right"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            共 <strong className="font-semibold text-foreground">{total.toLocaleString()}</strong> 条数据
+          </p>
+        </div>
       </header>
 
       <main
         id="result-list"
         className="mx-auto w-full max-w-5xl scroll-mt-32 px-5 py-7 pb-24 sm:px-8 sm:py-9 sm:pb-28"
-        aria-busy={isLoading}
+        aria-busy={isLoading || isPending}
       >
         <div className="mb-5 flex items-end justify-between gap-4">
           <div className="min-w-0">
@@ -355,7 +403,7 @@ export function SearchResults({
             </h1>
           </div>
           <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">
-            {provider === "全部" ? "全部来源" : provider}
+            {provider}
           </span>
         </div>
 
@@ -458,6 +506,8 @@ export function SearchResults({
                     const stageState = stageStates[resourceKey];
                     const resourceType = inferResourceType(`${resource.disk_name} ${resource.files}`);
                     const resourceProvider = providerFromDiskType(resource.disk_type);
+                    const displayName = sanitizeResourceDisplayText(resource.disk_name) || "未命名资源";
+                    const stageMessage = sanitizeResourceDisplayMessage(resource.stage_message ?? "");
                     const isOpening = stageState?.status === "opening";
                     const isDisabled = !resource.can_stage || isOpening;
 
@@ -472,18 +522,18 @@ export function SearchResults({
                               <button
                                 className="block max-w-full text-left text-sm font-semibold leading-5 text-slate-800 transition-colors hover:text-primary focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:text-slate-500"
                                 type="button"
-                                aria-label={`进入${resource.disk_name}详情`}
+                                aria-label={`进入${displayName}详情`}
                                 disabled={isDisabled}
                                 onClick={() => stageAndOpen(resource)}
                               >
                                 <span className="line-clamp-2 [overflow-wrap:anywhere]">
-                                {resource.disk_name}
+                                {displayName}
                                 </span>
                               </button>
                               {stageState?.status === "failed" ? (
                                 <p className="mt-2 text-xs leading-5 text-red-600" role="alert">{stageState.error}</p>
                               ) : !resource.can_stage ? (
-                                <p className="mt-2 text-xs leading-5 text-amber-700">{resource.stage_message || "该资源类型暂不支持"}</p>
+                                <p className="mt-2 text-xs leading-5 text-amber-700">{stageMessage || "该资源类型暂不支持"}</p>
                               ) : null}
                             </div>
                           </div>
@@ -526,7 +576,9 @@ export function SearchResults({
           <div className="flex min-h-80 flex-col items-center justify-center rounded-2xl border border-border bg-card px-6 text-center shadow-[0_1px_6px_rgb(17_24_39_/_0.03)]">
             <SearchX className="size-8 text-muted-foreground" aria-hidden="true" />
             <h2 className="mt-4 text-base font-semibold">没有找到匹配资源</h2>
-            <p className="mt-2 text-sm text-muted-foreground">换个关键词或选择“全部”来源再试试。</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {mode === "video" ? "换个关键词再试试。" : "换个关键词或切换网盘来源再试试。"}
+            </p>
             <Button className="mt-5 h-10 px-4" variant="outline" asChild>
               <Link href="/">返回首页</Link>
             </Button>

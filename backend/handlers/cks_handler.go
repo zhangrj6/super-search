@@ -1,9 +1,7 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -90,6 +88,14 @@ func CreateCks(c *gin.Context) {
 	// 清理 Cookie 中的换行/制表符（用户从 DevTools 复制时常带入），
 	// 让 DB 存干净值、避免因空白字符差异导致查重假阴性。
 	req.Ck = panutils.SanitizeCookie(req.Ck)
+	if pan.Name == "xunlei" {
+		refreshToken, parseErr := panutils.ParseXunleiRefreshToken(req.Ck)
+		if parseErr != nil {
+			ErrorResponse(c, "refresh_token 格式错误: "+parseErr.Error(), http.StatusBadRequest)
+			return
+		}
+		req.Ck = refreshToken
+	}
 
 	// FR-009 重复账号检测：(pan_id, ck) 完全一致即视为重复，提示走编辑路径
 	existing, findErr := repoManager.CksRepository.FindByPanIDAndCk(req.PanID, req.Ck)
@@ -129,94 +135,28 @@ func CreateCks(c *gin.Context) {
 	}
 
 	var cks *entity.Cks
-	// 迅雷网盘，使用账号密码登录
+	// 迅雷网盘使用 pan.xunlei.com 的 refresh_token 登录。
 	if serviceType == panutils.Xunlei {
-		// 解析账号密码信息
-		credentials, err := panutils.ParseCredentialsFromCk(req.Ck)
+		refreshToken, err := panutils.ParseXunleiRefreshToken(req.Ck)
 		if err != nil {
-			ErrorResponse(c, "账号密码格式错误: "+err.Error(), http.StatusBadRequest)
+			ErrorResponse(c, "refresh_token 格式错误: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		var tokenData *panutils.XunleiTokenData
-		var username string
-
-		// 按 client_type 选择身份 profile（android/browser）
 		xunleiService := service.(*panutils.XunleiPanService)
-		xunleiService.SetClientType(credentials.ClientType)
-
-		var token panutils.XunleiTokenData
-		if credentials.ClientType == "browser" {
-			// 迅雷浏览器APP：账号密码登录（对齐 OpenList ThunderBrowser）
-			if credentials.Username == "" || credentials.Password == "" {
-				ErrorResponse(c, "浏览器（迅雷浏览器APP）需填写账号（手机号）和密码", http.StatusBadRequest)
-				return
-			}
-			token, err = xunleiService.LoginWithCredentials(credentials.Username, credentials.Password, credentials.Creditkey)
-			if err != nil {
-				// 账号密码登录触发 review：结构化返回 creditkey + 验证链接，前端走 creditkey 闭环
-				var reviewErr *panutils.XunleiReviewError
-				if errors.As(err, &reviewErr) {
-					// review 作为业务状态返回（HTTP 200）：前端通用拦截会丢弃 4xx 响应体的 data，
-					// 故用 200 + need_review 标记，让前端在成功路径拿到 creditkey/验证链接走闭环
-					SuccessResponse(c, gin.H{
-						"need_review": true,
-						"creditkey":   reviewErr.Creditkey,
-						"review_url":  reviewErr.ReviewURL,
-						"device_id":   reviewErr.DeviceID,
-						"message":     reviewErr.Error(),
-					})
-					return
-				}
-				ErrorResponse(c, "账号密码登录失败: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-		} else {
-			// 安卓（下载管家）：refresh_token 登录
-			if credentials.RefreshToken == "" {
-				ErrorResponse(c, "请提供 refresh_token（用手机迅雷下载管家 APP 抓包获取，xluser-ssl.xunlei.com/v1/auth/token 响应的 refresh_token）", http.StatusBadRequest)
-				return
-			}
-			token, err = xunleiService.LoginByRefreshToken(credentials.RefreshToken)
-			if err != nil {
-				ErrorResponse(c, "refresh_token 登录失败: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-		}
-		tokenData = &token
-		username = "迅雷账号"
-
-		// 构建extra数据
-		extra := panutils.XunleiExtraData{
-			Token:   tokenData,
-			Captcha: &panutils.CaptchaData{},
-		}
-
-		// 如果有账号密码信息，保存到extra中
-		if credentials.Username != "" && credentials.Password != "" {
-			extra.Credentials = credentials
-		}
-
-		extraStr, _ := json.Marshal(extra)
-
-		// 声明userInfo变量
-		var userInfo *panutils.UserInfo
-
-		// 设置CKSRepository以便获取用户信息
-		xunleiService.SetCKSRepository(repoManager.CksRepository, entity.Cks{})
-
-		// 获取用户信息
-		userInfo, err = xunleiService.GetUserInfo(nil)
+		token, err := xunleiService.LoginByRefreshToken(refreshToken)
 		if err != nil {
-			log.Printf("获取迅雷用户信息失败，使用默认值: %v", err)
-			// 如果获取失败，使用默认值
-			userInfo = &panutils.UserInfo{
-				Username:    username,
-				VIPStatus:   false,
-				ServiceType: "xunlei",
-				TotalSpace:  0,
-				UsedSpace:   0,
-			}
+			ErrorResponse(c, "refresh_token 登录失败: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		userInfo, err := xunleiService.GetUserInfo(nil)
+		if err != nil {
+			ErrorResponse(c, "无法获取迅雷账号信息: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if userInfo.Username == "" {
+			userInfo.Username = "迅雷账号"
 		}
 
 		leftSpaceBytes := userInfo.TotalSpace - userInfo.UsedSpace
@@ -225,7 +165,7 @@ func CreateCks(c *gin.Context) {
 		cks = &entity.Cks{
 			PanID:       req.PanID,
 			Idx:         req.Idx,
-			Ck:          req.Ck, // 保持原始输入
+			Ck:          token.RefreshToken,
 			IsValid:     true, // 能走到这里说明 GetUserInfo 成功，cookie 有效；与 VIP 状态无关
 			Space:       userInfo.TotalSpace,
 			LeftSpace:   leftSpaceBytes,
@@ -233,7 +173,7 @@ func CreateCks(c *gin.Context) {
 			Username:    userInfo.Username,
 			VipStatus:   userInfo.VIPStatus,
 			ServiceType: userInfo.ServiceType,
-			Extra:       string(extraStr),
+			Extra:       userInfo.ExtraData,
 			Remark:      req.Remark,
 		}
 	} else {

@@ -1,6 +1,15 @@
+"use client";
+
+import { SearchLoadingOverlay } from "@/components/search-loading-overlay";
+import { useSearchParams } from "next/navigation";
+
 export default function SearchLoading() {
+  const searchParams = useSearchParams();
+  const mode = searchParams.get("mode") === "video" ? "video" : "resource";
+
   return (
-    <div className="min-h-screen bg-transparent text-foreground">
+    <div className="min-h-screen bg-transparent text-foreground" aria-busy="true">
+      <SearchLoadingOverlay mode={mode} />
       <header className="border-b border-border bg-background">
         <div className="mx-auto flex h-18 max-w-5xl items-center gap-4 px-5 sm:px-8">
           <div className="size-8 rounded-lg bg-primary" />
@@ -18,7 +27,7 @@ export default function SearchLoading() {
       </header>
       <main className="mx-auto max-w-5xl px-5 py-8 sm:px-8">
         <div className="mb-6 h-7 w-48 animate-pulse rounded bg-muted motion-reduce:animate-none" />
-        <div className="grid gap-3">
+        <div className="grid gap-3" aria-hidden="true">
           {Array.from({ length: 3 }).map((_, index) => (
             <div
               className="h-32 animate-pulse rounded-2xl border border-border bg-card motion-reduce:animate-none"

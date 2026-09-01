@@ -1,6 +1,6 @@
 import "server-only";
 
-const DEFAULT_API_BASE = "http://154.94.234.246:13001/api";
+const DEFAULT_API_BASE = "https://52juyou.com/api";
 
 function getApiBase() {
   const rawBase = process.env.URLDB_API_BASE?.trim() || DEFAULT_API_BASE;

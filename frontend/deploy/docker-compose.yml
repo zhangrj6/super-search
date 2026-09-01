@@ -38,6 +38,23 @@ services:
         condition: service_healthy
     volumes:
       - uploads:/root/uploads
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-18080}:8080"
+    networks:
+      - internal
+
+  admin:
+    image: ghcr.io/zhangrj6/super-search-admin:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NUXT_PUBLIC_API_SERVER: http://backend:8080/api
+      NUXT_PUBLIC_API_BASE: /api
+      NUXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-https://52juyou.com}
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-13001}:3000"
     networks:
       - internal
 
@@ -49,6 +66,7 @@ services:
     environment:
       NODE_ENV: production
       URLDB_API_BASE: http://backend:8080/api
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-https://52juyou.com}
     depends_on:
       - backend
     ports:

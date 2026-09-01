@@ -59,7 +59,7 @@ const emit = defineEmits<{
 }>()
 
 // 示例数据
-const sampleData = ref('https://pan.l9.lc')
+const sampleData = ref('https://52juyou.com')
 
 // 当前选中的预设
 const selectedPreset = ref<Preset | null>(null)

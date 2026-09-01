@@ -12,8 +12,8 @@ describe('melost two-stage resource flow', () => {
     expect(component).not.toContain('获取链接')
     expect(component).toContain('stageAndOpen(item)')
     expect(component).toContain('router.push(`/r/${result.resource_key}`)')
-    expect(composable).toContain("useApiFetch('/melost/resources'")
-    expect(composable).not.toContain('/melost/import')
+    expect(composable).toContain("useApiFetch('/resources/stage'")
+    expect(composable).not.toContain('/melost')
     expect(composable).not.toContain('getImportStatus')
   })
 
