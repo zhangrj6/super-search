@@ -217,17 +217,40 @@ func (s *resourceLinkServiceImpl) ResolveWithCheck(ctx context.Context, resource
 // 传入所需仓库，避免依赖包级 repoManager，便于网页端与机器人共用。
 func PerformAutoTransfer(cksRepo repo.CksRepository, configRepo repo.SystemConfigRepository, resourceRepo repo.ResourceRepository, resource *entity.Resource, triggerSources ...string) TransferResult {
 	startedAt := time.Now()
+	if resource == nil {
+		return TransferResult{Success: false, ErrorMsg: "resource 为空"}
+	}
+	triggerSource := "auto_transfer"
+	if len(triggerSources) > 0 && strings.TrimSpace(triggerSources[0]) != "" {
+		triggerSource = strings.TrimSpace(triggerSources[0])
+	}
+	recordFailure := func(account *entity.Cks, message string) {
+		if _, err := RecordFailedTransfer(resource, account, TransferRecordInput{
+			Operation:        entity.TransferOperationTransfer,
+			TriggerSource:    triggerSource,
+			PreviousShareURL: resource.SaveURL,
+			ErrorMessage:     strings.TrimSpace(message),
+			OccurredAt:       time.Now(),
+			DurationMS:       time.Since(startedAt).Milliseconds(),
+		}); err != nil {
+			utils.Error("记录失败转存链路失败 (resource=%d): %v", resource.ID, err)
+		}
+	}
 	utils.Info("开始执行资源转存 - ID: %d, URL: %s", resource.ID, resource.URL)
 
 	panID := resource.PanID
 	if panID == nil {
-		return TransferResult{Success: false, ErrorMsg: "资源未关联网盘平台"}
+		message := "资源未关联网盘平台"
+		recordFailure(nil, message)
+		return TransferResult{Success: false, ErrorMsg: message}
 	}
 
 	accounts, err := cksRepo.FindByPanID(*panID)
 	if err != nil {
 		utils.Error("获取网盘账号失败: %v", err)
-		return TransferResult{Success: false, ErrorMsg: fmt.Sprintf("获取网盘账号失败: %v", err)}
+		message := fmt.Sprintf("获取网盘账号失败: %v", err)
+		recordFailure(nil, message)
+		return TransferResult{Success: false, ErrorMsg: message}
 	}
 
 	autoTransferMinSpace, err := configRepo.GetConfigInt(entity.ConfigKeyAutoTransferMinSpace)
@@ -258,6 +281,7 @@ func PerformAutoTransfer(cksRepo repo.CksRepository, configRepo repo.SystemConfi
 	if len(validAccounts) == 0 {
 		msg := fmt.Sprintf("没有可用的网盘账号 (候选 %d 个, 最小空间要求 %dGB)", len(accounts), autoTransferMinSpace)
 		utils.Warn("%s", msg)
+		recordFailure(nil, msg)
 		return TransferResult{Success: false, ErrorMsg: msg}
 	}
 
@@ -291,10 +315,6 @@ func PerformAutoTransfer(cksRepo repo.CksRepository, configRepo repo.SystemConfi
 			utils.Error("更新资源转存信息失败: %v", err)
 		}
 
-		triggerSource := "auto_transfer"
-		if len(triggerSources) > 0 && strings.TrimSpace(triggerSources[0]) != "" {
-			triggerSource = strings.TrimSpace(triggerSources[0])
-		}
 		if _, err := RecordSuccessfulTransfer(resource, &account, TransferRecordInput{
 			Operation:        entity.TransferOperationTransfer,
 			TriggerSource:    triggerSource,
@@ -311,6 +331,7 @@ func PerformAutoTransfer(cksRepo repo.CksRepository, configRepo repo.SystemConfi
 		if err := resourceRepo.Update(resource); err != nil {
 			utils.Error("更新资源错误信息失败: %v", err)
 		}
+		recordFailure(&account, result.ErrorMsg)
 	}
 
 	return result

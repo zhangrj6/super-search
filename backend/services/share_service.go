@@ -20,14 +20,37 @@ func PerformShare(cksRepo repo.CksRepository, resourceRepo repo.ResourceReposito
 	if resource == nil {
 		return TransferResult{Success: false, ErrorMsg: "resource 为空"}
 	}
+	triggerSource := "reshare"
+	if len(triggerSources) > 0 && strings.TrimSpace(triggerSources[0]) != "" {
+		triggerSource = strings.TrimSpace(triggerSources[0])
+	}
+	previousShareURL := resource.SaveURL
+	recordFailure := func(account *entity.Cks, message, resultURL string) {
+		if _, err := RecordFailedTransfer(resource, account, TransferRecordInput{
+			Operation:        entity.TransferOperationShare,
+			TriggerSource:    triggerSource,
+			PreviousShareURL: previousShareURL,
+			ResultURL:        resultURL,
+			FileID:           resource.Fid,
+			ErrorMessage:     strings.TrimSpace(message),
+			OccurredAt:       time.Now(),
+			DurationMS:       time.Since(startedAt).Milliseconds(),
+		}); err != nil {
+			utils.Error("[SHARE] 记录失败分享链路失败 (resource=%d): %v", resource.ID, err)
+		}
+	}
 	if resource.CkID == nil || resource.Fid == "" {
-		return TransferResult{Success: false, ErrorMsg: "资源无已转存文件信息（缺少 ck_id/fid）"}
+		message := "资源无已转存文件信息（缺少 ck_id/fid）"
+		recordFailure(nil, message, "")
+		return TransferResult{Success: false, ErrorMsg: message}
 	}
 
 	account, err := cksRepo.FindByID(*resource.CkID)
 	if err != nil || account == nil {
 		utils.Error("[SHARE] 取持有账号失败 (ck_id=%d): %v", *resource.CkID, err)
-		return TransferResult{Success: false, ErrorMsg: fmt.Sprintf("取持有账号失败: %v", err)}
+		message := fmt.Sprintf("取持有账号失败: %v", err)
+		recordFailure(nil, message, "")
+		return TransferResult{Success: false, ErrorMsg: message}
 	}
 
 	factory := panutils.NewPanFactory()
@@ -37,19 +60,25 @@ func PerformShare(cksRepo repo.CksRepository, resourceRepo repo.ResourceReposito
 	})
 	if err != nil {
 		utils.Error("[SHARE] 创建网盘服务失败: %v", err)
-		return TransferResult{Success: false, ErrorMsg: fmt.Sprintf("创建网盘服务失败: %v", err)}
+		message := fmt.Sprintf("创建网盘服务失败: %v", err)
+		recordFailure(account, message, "")
+		return TransferResult{Success: false, ErrorMsg: message}
 	}
 	service.SetCKSRepository(cksRepo, *account)
 
 	sharer, ok := service.(panutils.Sharer)
 	if !ok {
-		return TransferResult{Success: false, ErrorMsg: "该网盘平台不支持重新分享"}
+		message := "该网盘平台不支持重新分享"
+		recordFailure(account, message, "")
+		return TransferResult{Success: false, ErrorMsg: message}
 	}
 
 	result, err := sharer.Share(resource.Fid)
 	if err != nil {
 		utils.Error("[SHARE] 重新分享失败 (resource=%d): %v", resource.ID, err)
-		return TransferResult{Success: false, ErrorMsg: fmt.Sprintf("重新分享失败: %v", err)}
+		message := fmt.Sprintf("重新分享失败: %v", err)
+		recordFailure(account, message, "")
+		return TransferResult{Success: false, ErrorMsg: message}
 	}
 	if result == nil || !result.Success || result.ShareURL == "" {
 		msg := "重新分享失败"
@@ -57,10 +86,10 @@ func PerformShare(cksRepo repo.CksRepository, resourceRepo repo.ResourceReposito
 			msg = result.Message
 		}
 		utils.Warn("[SHARE] 重新分享未成功 (resource=%d): %s", resource.ID, msg)
+		recordFailure(account, msg, "")
 		return TransferResult{Success: false, ErrorMsg: msg}
 	}
 
-	previousShareURL := resource.SaveURL
 	now := time.Now()
 	resource.SaveURL = result.ShareURL
 	resource.TransferredAt = &now
@@ -73,13 +102,11 @@ func PerformShare(cksRepo repo.CksRepository, resourceRepo repo.ResourceReposito
 		"last_clean_error_at": nil,
 	}); err != nil {
 		utils.Error("[SHARE] 更新 save_url 失败: %v", err)
-		return TransferResult{Success: false, ErrorMsg: fmt.Sprintf("更新 save_url 失败: %v", err)}
+		message := fmt.Sprintf("更新 save_url 失败: %v", err)
+		recordFailure(account, message, result.ShareURL)
+		return TransferResult{Success: false, ErrorMsg: message}
 	}
 
-	triggerSource := "reshare"
-	if len(triggerSources) > 0 && strings.TrimSpace(triggerSources[0]) != "" {
-		triggerSource = strings.TrimSpace(triggerSources[0])
-	}
 	if _, err := RecordSuccessfulTransfer(resource, account, TransferRecordInput{
 		Operation:        entity.TransferOperationShare,
 		TriggerSource:    triggerSource,

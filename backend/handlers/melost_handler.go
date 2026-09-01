@@ -23,7 +23,7 @@ import (
 type MelostHandler struct {
 	repoMgr *repo.RepositoryManager
 	client  *services.MelostClient
-	xusou   *services.XusouClient
+	quanpan *services.QuanpanClient
 	stageMu sync.Mutex
 }
 
@@ -60,7 +60,7 @@ func NewMelostHandler(repoMgr *repo.RepositoryManager) *MelostHandler {
 	return &MelostHandler{
 		repoMgr: repoMgr,
 		client:  services.NewMelostClient(),
-		xusou:   services.NewXusouClient(),
+		quanpan: services.NewQuanpanClient(),
 	}
 }
 
@@ -144,19 +144,19 @@ func (h *MelostHandler) Search(c *gin.Context) {
 }
 
 func (h *MelostHandler) searchVideos(c *gin.Context, request melostSearchRequest) {
-	if h.xusou == nil {
+	if h.quanpan == nil {
 		ErrorResponse(c, "视频搜索服务暂时不可用，请稍后重试", http.StatusBadGateway)
 		return
 	}
 	started := time.Now()
-	xusouType, ok := xusouTypeForProvider(request.Type)
+	quanpanProvider, ok := quanpanProviderForType(request.Type)
 	if !ok {
 		ErrorResponse(c, "仅支持夸克网盘和迅雷云盘", http.StatusBadRequest)
 		return
 	}
-	results, err := h.xusou.Search(c.Request.Context(), request.Query, xusouType)
+	results, err := h.quanpan.Search(c.Request.Context(), request.Query, quanpanProvider)
 	if err != nil {
-		utils.Error("xusou 视频搜索失败 query=%q: %v", request.Query, err)
+		utils.Error("quanpan 视频搜索失败 query=%q: %v", request.Query, err)
 		ErrorResponse(c, "视频搜索服务暂时不可用，请稍后重试", http.StatusBadGateway)
 		return
 	}
@@ -173,20 +173,16 @@ func (h *MelostHandler) searchVideos(c *gin.Context, request melostSearchRequest
 	items := make([]melostSearchItemResponse, 0, end-start)
 	for _, item := range results[start:end] {
 		melostItem := services.MelostSearchResult{
-			DocID:     services.XusouResultID(item),
-			DiskName:  item.Title,
-			DiskType:  xusouDiskType(item.IsType),
-			Link:      item.URL,
-			Files:     item.LineName,
-			Tags:      compactTags(item.LineName),
-			ShareUser: "许搜",
+			DocID:      services.QuanpanResultID(item),
+			DiskName:   item.Note,
+			DiskType:   strings.ToUpper(quanpanProvider),
+			Link:       item.URL,
+			DiskPass:   item.Password,
+			Tags:       []string{},
+			SharedTime: item.Datetime,
+			ShareUser:  "全盘搜索",
 		}
-		response := melostSearchItemResponse{
-			MelostSearchResult: melostItem,
-			CanStage:           true,
-			Source:             "xusou",
-		}
-		items = append(items, response)
+		items = append(items, buildSearchItemResponse(melostItem, "quanpan"))
 	}
 
 	SuccessResponse(c, gin.H{
@@ -212,29 +208,15 @@ func buildSearchItemResponse(item services.MelostSearchResult, source string) me
 	return response
 }
 
-func xusouDiskType(isType int) string {
-	if isType == 4 {
-		return "XUNLEI"
-	}
-	return "QUARK"
-}
-
-func xusouTypeForProvider(provider string) (int, bool) {
+func quanpanProviderForType(provider string) (string, bool) {
 	switch strings.ToUpper(strings.TrimSpace(provider)) {
 	case "QUARK":
-		return 0, true
+		return "quark", true
 	case "XUNLEI":
-		return 4, true
+		return "xunlei", true
 	default:
-		return 0, false
+		return "", false
 	}
-}
-
-func compactTags(value string) []string {
-	if strings.TrimSpace(value) == "" {
-		return []string{}
-	}
-	return []string{value}
 }
 
 // StageResource saves a melost result locally without accessing a cloud-drive account.
@@ -254,21 +236,9 @@ func (h *MelostHandler) StageResource(c *gin.Context) {
 		ErrorResponse(c, "资源标题不能为空", http.StatusBadRequest)
 		return
 	}
-	if strings.EqualFold(strings.TrimSpace(request.Source), "xusou") {
-		if h.xusou == nil {
-			ErrorResponse(c, "视频链接服务暂时不可用，请稍后重试", http.StatusBadGateway)
-			return
-		}
-		resolvedLink, resolveErr := h.xusou.Resolve(c.Request.Context(), request.Link, request.Title)
-		if resolveErr != nil {
-			utils.Error("xusou 分享链接解析失败 title=%q: %v", request.Title, resolveErr)
-			ErrorResponse(c, "视频链接获取失败，请稍后重试", http.StatusBadGateway)
-			return
-		}
-		request.Link = resolvedLink
-		resourceSource = "xusou"
+	if strings.EqualFold(strings.TrimSpace(request.Source), "quanpan") {
+		resourceSource = "quanpan"
 	}
-
 	serviceType, _, supported := transferServiceForURL(request.Link)
 	if !supported {
 		ErrorResponse(c, "该链接类型暂不支持转存", http.StatusBadRequest)

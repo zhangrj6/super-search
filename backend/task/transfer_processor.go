@@ -156,7 +156,32 @@ func (tp *TransferProcessor) Process(ctx context.Context, taskID uint, item *ent
 	transferStart := utils.GetCurrentTime()
 	resourceID, saveURL, err := tp.performTransfer(ctx, taskID, item.ID, &input, cks, existingResource)
 	transferDuration := time.Since(transferStart)
+	recordTransferFailure := func(message string) {
+		var panID *uint
+		if input.PanID != 0 {
+			value := input.PanID
+			panID = &value
+		}
+		taskIDCopy := taskID
+		taskItemIDCopy := item.ID
+		if _, recordErr := services.RecordFailedTransfer(existingResource, nil, services.TransferRecordInput{
+			Operation:      entity.TransferOperationTransfer,
+			TriggerSource:  "admin_transfer_task",
+			ResourceSource: "task",
+			SourceURL:      input.URL,
+			ResourceTitle:  input.Title,
+			PanID:          panID,
+			ErrorMessage:   strings.TrimSpace(message),
+			OccurredAt:     time.Now(),
+			TaskID:         &taskIDCopy,
+			TaskItemID:     &taskItemIDCopy,
+			DurationMS:     transferDuration.Milliseconds(),
+		}); recordErr != nil {
+			utils.Error("记录任务失败转存链路失败 (task=%d, item=%d): %v", taskID, item.ID, recordErr)
+		}
+	}
 	if err != nil {
+		recordTransferFailure(err.Error())
 		// 转存失败，更新输出数据
 		output := TransferOutput{
 			Error:   err.Error(),
@@ -181,6 +206,7 @@ func (tp *TransferProcessor) Process(ctx context.Context, taskID uint, item *ent
 
 	// 验证转存结果
 	if saveURL == "" {
+		recordTransferFailure("转存成功但未获取到分享链接")
 		output := TransferOutput{
 			Error:   "转存成功但未获取到分享链接",
 			Success: false,

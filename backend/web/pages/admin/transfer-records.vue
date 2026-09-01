@@ -124,7 +124,10 @@
               <tr v-for="record in records" :key="record.id">
                 <td>
                   <div class="space-y-1">
-                    <n-tag :type="operationTagType(record.operation)" size="small">{{ operationLabel(record.operation) }}</n-tag>
+                    <div class="flex flex-wrap gap-1">
+                      <n-tag :type="operationTagType(record.operation)" size="small">{{ operationLabel(record.operation) }}</n-tag>
+                      <n-tag :type="statusTagType(record.status)" size="small">{{ statusLabel(record.status) }}</n-tag>
+                    </div>
                     <div class="text-xs text-gray-500 dark:text-gray-400">{{ triggerSourceLabel(record.trigger_source) }}</div>
                   </div>
                 </td>
@@ -143,7 +146,16 @@
                   </div>
                 </td>
                 <td><LinkActions :url="record.source_url" @copy="copyText" @open="openURL" /></td>
-                <td><LinkActions :url="record.result_url" @copy="copyText" @open="openURL" /></td>
+                <td>
+                  <LinkActions :url="record.result_url" @copy="copyText" @open="openURL" />
+                  <p
+                    v-if="record.status === 'failed' && record.error_message"
+                    class="mt-1 max-w-48 truncate text-xs text-red-600 dark:text-red-400"
+                    :title="record.error_message"
+                  >
+                    {{ record.error_message }}
+                  </p>
+                </td>
                 <td>
                   <div class="whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">{{ formatDate(record.occurred_at) }}</div>
                   <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ record.duration_ms || 0 }} ms</div>
@@ -177,6 +189,7 @@
               <div class="min-w-0">
                 <div class="mb-2 flex flex-wrap items-center gap-2">
                   <n-tag :type="operationTagType(record.operation)" size="small">{{ operationLabel(record.operation) }}</n-tag>
+                  <n-tag :type="statusTagType(record.status)" size="small">{{ statusLabel(record.status) }}</n-tag>
                   <n-tag :type="cleanupTagType(record.cleanup_status)" size="small">{{ cleanupLabel(record.cleanup_status) }}</n-tag>
                 </div>
                 <button type="button" class="title-button" @click="openDetails(record)">
@@ -192,6 +205,9 @@
               <div><dt>账号</dt><dd>{{ accountLabel(record) }}</dd></div>
               <div class="col-span-2"><dt>操作时间</dt><dd>{{ formatDate(record.occurred_at) }}</dd></div>
             </dl>
+            <p v-if="record.status === 'failed' && record.error_message" class="mt-3 text-sm leading-5 text-red-600 dark:text-red-400">
+              {{ record.error_message }}
+            </p>
             <div class="mt-3 flex items-center justify-between border-t border-gray-100 pt-3 dark:border-gray-700">
               <span class="text-xs text-gray-500 dark:text-gray-400">{{ triggerSourceLabel(record.trigger_source) }}</span>
               <div class="flex items-center gap-2">
@@ -388,6 +404,7 @@ const cleanupOptions = [
   { label: '待清理', value: 'pending' },
   { label: '已清理', value: 'cleaned' },
   { label: '清理失败', value: 'failed' },
+  { label: '无需清理', value: 'not_required' },
 ]
 const panOptions = [
   { label: '夸克网盘', value: 'quark' },
@@ -550,10 +567,10 @@ function operationLabel(value: string) { return value === 'share' ? '重新分�
 function operationTagType(value: string) { return value === 'share' ? 'info' : 'success' }
 function statusLabel(value: string) { return value === 'failed' ? '失败' : '成功' }
 function statusTagType(value: string) { return value === 'failed' ? 'error' : 'success' }
-function cleanupLabel(value: string) { return ({ pending: '待清理', cleaned: '已清理', failed: '清理失败' } as Record<string, string>)[value] || value || '-' }
-function cleanupTagType(value: string) { return ({ pending: 'warning', cleaned: 'success', failed: 'error' } as Record<string, any>)[value] || 'default' }
+function cleanupLabel(value: string) { return ({ pending: '待清理', cleaned: '已清理', failed: '清理失败', not_required: '无需清理' } as Record<string, string>)[value] || value || '-' }
+function cleanupTagType(value: string) { return ({ pending: 'warning', cleaned: 'success', failed: 'error', not_required: 'default' } as Record<string, any>)[value] || 'default' }
 function panLabel(value: string) { return ({ quark: '夸克网盘', xunlei: '迅雷网盘', baidu: '百度网盘', uc: 'UC 网盘', alipan: '阿里云盘', aliyun: '阿里云盘' } as Record<string, string>)[value] || value || '-' }
-function triggerSourceLabel(value: string) { return ({ resource_link: '智能取链', auto_transfer: '自动转存', reshare: '重新分享', admin_transfer_task: '后台转存任务', melost: '聚合搜索', web_resource_detail: '网页详情' } as Record<string, string>)[value] || value || '系统' }
+function triggerSourceLabel(value: string) { return ({ resource_link: '智能取链', auto_transfer: '自动转存', reshare: '重新分享', admin_transfer_task: '后台转存任务', melost: '聚合搜索', quanpan: '聚合视频搜索', web_resource_detail: '网页详情' } as Record<string, string>)[value] || value || '系统' }
 function accountLabel(record: TransferRecord) { return record.account_remark || record.account_username || (record.account_id ? `账号 #${record.account_id}` : '-') }
 function displayValue(value: unknown) { return value === null || value === undefined || value === '' ? '-' : String(value) }
 function formatNumber(value: number) { return new Intl.NumberFormat('zh-CN').format(value || 0) }
@@ -584,6 +601,7 @@ function displayURL(value: string) {
 
 function cleanupTimeLabel(record: TransferRecord) {
   if (record.cleanup_status === 'cleaned') return formatDate(record.cleaned_at)
+  if (record.cleanup_status === 'not_required') return '-'
   return `到期 ${formatDate(record.cleanup_due_at)}`
 }
 

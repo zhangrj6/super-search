@@ -47,7 +47,7 @@ export type MelostSearchItem = {
   size: number;
   can_stage: boolean;
   stage_message?: string;
-  source?: "melost" | "xusou" | string;
+  source?: "melost" | "quanpan" | string;
 };
 
 export type MelostSearchResponse = {

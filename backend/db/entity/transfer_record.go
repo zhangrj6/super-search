@@ -9,9 +9,10 @@ const (
 	TransferRecordStatusSucceeded = "succeeded"
 	TransferRecordStatusFailed    = "failed"
 
-	TransferCleanupPending = "pending"
-	TransferCleanupCleaned = "cleaned"
-	TransferCleanupFailed  = "failed"
+	TransferCleanupPending     = "pending"
+	TransferCleanupCleaned     = "cleaned"
+	TransferCleanupFailed      = "failed"
+	TransferCleanupNotRequired = "not_required"
 )
 
 // TransferRecord permanently snapshots a transfer/share operation. Credentials

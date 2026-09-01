@@ -24,9 +24,10 @@ var validTransferStatuses = map[string]bool{
 }
 
 var validTransferCleanupStatuses = map[string]bool{
-	entity.TransferCleanupPending: true,
-	entity.TransferCleanupCleaned: true,
-	entity.TransferCleanupFailed:  true,
+	entity.TransferCleanupPending:     true,
+	entity.TransferCleanupCleaned:     true,
+	entity.TransferCleanupFailed:      true,
+	entity.TransferCleanupNotRequired: true,
 }
 
 func GetTransferRecords(c *gin.Context) {

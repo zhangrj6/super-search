@@ -88,3 +88,68 @@ func TestTransferRecordServiceRecordSuccess(t *testing.T) {
 		t.Fatal("audit record must not contain account credentials")
 	}
 }
+
+func TestTransferRecordServiceRecordFailure(t *testing.T) {
+	recordRepo := &transferRecordRepoFake{}
+	service := NewTransferRecordService(recordRepo, &transferPanRepoFake{pan: &entity.Pan{
+		ID: 1, Name: "quark", Remark: "夸克网盘",
+	}})
+	panID := uint(1)
+	resource := &entity.Resource{
+		ID: 31, Title: "失败资源", URL: "https://pan.quark.cn/s/source", Source: "quanpan", PanID: &panID,
+	}
+	account := &entity.Cks{
+		ID: 9, PanID: 1, Username: "transfer@example.com", Remark: "中转二号", ServiceType: "quark",
+	}
+
+	record, err := service.RecordFailure(resource, account, TransferRecordInput{
+		TriggerSource: "resource_link",
+		ErrorMessage:  "容量不足",
+		DurationMS:    1520,
+	})
+	if err != nil {
+		t.Fatalf("RecordFailure() error = %v", err)
+	}
+	if record.Status != entity.TransferRecordStatusFailed || record.ErrorMessage != "容量不足" {
+		t.Fatalf("failure state mismatch: %+v", record)
+	}
+	if record.CleanupStatus != entity.TransferCleanupNotRequired || record.CleanupDueAt != nil {
+		t.Fatalf("failed transfer must not enter cleanup queue: %+v", record)
+	}
+	if recordRepo.extendedResource != 0 || recordRepo.extendedAccount != 0 || recordRepo.extendedFile != "" {
+		t.Fatalf("failed transfer unexpectedly extended cleanup: %+v", recordRepo)
+	}
+	if record.AccountID == nil || *record.AccountID != account.ID || record.PanName != "夸克网盘" {
+		t.Fatalf("account snapshot mismatch: %+v", record)
+	}
+}
+
+func TestTransferRecordServiceRecordFailureWithoutPersistedResource(t *testing.T) {
+	recordRepo := &transferRecordRepoFake{}
+	service := NewTransferRecordService(recordRepo, nil)
+	taskID := uint(11)
+	taskItemID := uint(12)
+
+	record, err := service.RecordFailure(nil, nil, TransferRecordInput{
+		TriggerSource:  "admin_transfer_task",
+		ResourceTitle:  "待转存资源",
+		ResourceSource: "task",
+		SourceURL:      "https://pan.xunlei.com/s/source",
+		PanType:        "xunlei",
+		ErrorMessage:   "分享状态异常",
+		TaskID:         &taskID,
+		TaskItemID:     &taskItemID,
+	})
+	if err != nil {
+		t.Fatalf("RecordFailure() error = %v", err)
+	}
+	if record.ResourceID != nil || record.ResourceTitle != "待转存资源" || record.SourceURL == "" {
+		t.Fatalf("unpersisted resource snapshot mismatch: %+v", record)
+	}
+	if record.TaskID == nil || *record.TaskID != taskID || record.TaskItemID == nil || *record.TaskItemID != taskItemID {
+		t.Fatalf("task snapshot mismatch: %+v", record)
+	}
+	if record.PanType != "xunlei" || record.PanName != "xunlei" {
+		t.Fatalf("platform snapshot mismatch: %+v", record)
+	}
+}

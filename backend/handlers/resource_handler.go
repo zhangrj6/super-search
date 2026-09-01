@@ -302,7 +302,7 @@ func GetResourcesByKey(c *gin.Context) {
 	var responses []dto.ResourceResponse
 	for _, resource := range resources {
 		response := converter.ToResourceResponse(&resource)
-		if resource.Source == "melost" || resource.Source == "xusou" {
+		if resource.Source == "melost" || resource.Source == "quanpan" {
 			response.URL = ""
 			response.SaveURL = ""
 		}
@@ -778,7 +778,7 @@ func GetResourceLink(c *gin.Context) {
 	// External-search results are staged without touching a cloud drive. Their
 	// original links are never returned to visitors: this endpoint must produce
 	// a new share link or fail.
-	if resource.Source == "melost" || resource.Source == "xusou" {
+	if resource.Source == "melost" || resource.Source == "quanpan" {
 		if resource.SaveURL != "" {
 			SuccessResponse(c, gin.H{
 				"url":         resource.SaveURL,

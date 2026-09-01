@@ -257,3 +257,31 @@ func TestPerformShare_Guards(t *testing.T) {
 	}
 }
 
+func TestPerformAutoTransferRecordsFailure(t *testing.T) {
+	recordRepo := &transferRecordRepoFake{}
+	SetDefaultTransferRecordService(NewTransferRecordService(recordRepo, &fakePanRepo{pan: panQuark}))
+	defer SetDefaultTransferRecordService(nil)
+
+	resource := mkRes(21, "https://pan.quark.cn/s/failed", "", true)
+	resource.Title = "账号查询失败资源"
+	result := PerformAutoTransfer(
+		&fakeCksRepo{},
+		&fakeConfigRepo{autoTransfer: true},
+		&fakeResourceRepo{},
+		resource,
+		"resource_link",
+	)
+
+	if result.Success || result.ErrorMsg == "" {
+		t.Fatalf("expected failed transfer result, got %+v", result)
+	}
+	if recordRepo.created == nil {
+		t.Fatal("expected failed transfer record")
+	}
+	if recordRepo.created.Status != entity.TransferRecordStatusFailed || recordRepo.created.CleanupStatus != entity.TransferCleanupNotRequired {
+		t.Fatalf("unexpected failed transfer record: %+v", recordRepo.created)
+	}
+	if recordRepo.created.ErrorMessage != result.ErrorMsg || recordRepo.created.TriggerSource != "resource_link" {
+		t.Fatalf("failure details mismatch: %+v", recordRepo.created)
+	}
+}

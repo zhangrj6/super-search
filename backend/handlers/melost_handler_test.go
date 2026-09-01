@@ -43,21 +43,21 @@ func TestIsAllowedMelostType(t *testing.T) {
 	}
 }
 
-func TestXusouTypeForProvider(t *testing.T) {
+func TestQuanpanProviderForType(t *testing.T) {
 	tests := []struct {
 		provider string
-		wantType int
+		wantType string
 		wantOK   bool
 	}{
-		{provider: "QUARK", wantType: 0, wantOK: true},
-		{provider: "quark", wantType: 0, wantOK: true},
-		{provider: "XUNLEI", wantType: 4, wantOK: true},
-		{provider: "BDY", wantType: 0, wantOK: false},
+		{provider: "QUARK", wantType: "quark", wantOK: true},
+		{provider: "quark", wantType: "quark", wantOK: true},
+		{provider: "XUNLEI", wantType: "xunlei", wantOK: true},
+		{provider: "BDY", wantType: "", wantOK: false},
 	}
 	for _, test := range tests {
-		gotType, gotOK := xusouTypeForProvider(test.provider)
+		gotType, gotOK := quanpanProviderForType(test.provider)
 		if gotType != test.wantType || gotOK != test.wantOK {
-			t.Fatalf("xusouTypeForProvider(%q) = (%d, %v), want (%d, %v)", test.provider, gotType, gotOK, test.wantType, test.wantOK)
+			t.Fatalf("quanpanProviderForType(%q) = (%q, %v), want (%q, %v)", test.provider, gotType, gotOK, test.wantType, test.wantOK)
 		}
 	}
 }
