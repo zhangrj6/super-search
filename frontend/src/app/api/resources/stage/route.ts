@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   }
 
   return forwardUrldbJson(
-    "/melost/resources",
+    "/resources/stage",
     { method: "POST", body },
     "保存资源失败，请稍后重试",
   );

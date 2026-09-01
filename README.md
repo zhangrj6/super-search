@@ -12,14 +12,22 @@ created only when a visitor requests it from the resource detail page.
 
 ## Search flow
 
-1. `POST /api/melost/search` searches melost.cn.
-2. Clicking a result calls `POST /api/melost/resources` and stores metadata only.
+1. `POST /api/search` searches melost.cn for resource mode. With
+   `search_type: "video"`, URLDB concurrently reads the Quark (`is_type=0`)
+   and Xunlei (`is_type=4`) SSE streams from xusou.cn, merges the results, and
+   paginates the combined list before returning JSON.
+2. Clicking a result calls `POST /api/resources/stage` and stores metadata only.
 3. The resource detail page reads the staged resource by its public key.
 4. `GET /api/resources/:id/link` transfers the resource and returns only the new
    share link.
 
-Visitors do not need to sign in. Original melost share links are not returned by
-the public detail or transfer APIs.
+Visitors do not need to sign in. Original links from melost and xusou are not
+returned by the public detail or transfer APIs.
+
+For xusou video results, the returned `link` is a temporary encoded value. The
+stage request carries `source: "xusou"`; URLDB resolves it through xusou's
+`save_url` endpoint only after the visitor clicks to get a link, then continues
+through the existing staging and transfer/share flow.
 
 ## Run with Docker
 
@@ -29,8 +37,15 @@ cp .env.example .env
 docker compose -f compose.yml up -d --build
 ```
 
-The public Next.js application listens on `127.0.0.1:13000` by default. Put
-Nginx or another reverse proxy in front of it for public access.
+The public Next.js application listens on `127.0.0.1:13000` by default. The
+URLDB administration frontend listens on `127.0.0.1:13001`, and the Go API
+listens on `127.0.0.1:18080`. Put Nginx or another reverse proxy in front of
+these loopback-only ports for public access. The provided Nginx configuration
+keeps the search application at `/`, exposes the API at `/api/`, and serves the
+administration frontend at `/admin`.
+
+On a new database, sign in to `/login` with the URLDB default administrator
+account (`admin` / `password`) and change the password immediately.
 
 ## Frontend development
 

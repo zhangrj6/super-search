@@ -31,9 +31,9 @@ import (
 const (
 	alipanTokenURL    = "https://auth.alipan.com/v2/account/token" // refresh_token 换 access_token
 	alipanAPIBase     = "https://api.aliyundrive.com"
-	alipanUrldbFolder = "urldb"            // FR-014 固定转存目录名
+	alipanUrldbFolder = "urldb"                // FR-014 固定转存目录名
 	alipanMinInterval = 800 * time.Millisecond // per-account 最小请求间隔（防风控，FR-015）
-	alipanMaxRetry    = 3                  // 风控退避重试上限（SC-006）
+	alipanMaxRetry    = 3                      // 风控退避重试上限（SC-006）
 	// ECC 动态签名（移植 OpenList aliyundrive）：secp256k1 密钥对 + sign(secpAppID:deviceID:userID:0)
 	alipanSecpAppID        = "5dde4e1bdf9e4966b387ba58f4b3fdc3"
 	alipanCreateSessionURL = alipanAPIBase + "/users/v1/users/device/create_session"
@@ -663,30 +663,82 @@ func (a *AlipanService) ensureUrldbFolder() (string, error) {
 
 // findFolderInRoot 在账号根目录下查找指定名称的文件夹/文件，返回 file_id（未找到或出错返回空）
 func (a *AlipanService) findFolderInRoot(name string) string {
-	respData, err := a.alipanRequest("POST", alipanAPIBase+"/adrive/v3/file/list", map[string]interface{}{
-		"drive_id":        a.extra.DriveID,
-		"parent_file_id":  "root",
-		"limit":           200,
-		"order_by":        "name",
-		"order_direction": "ASC",
-		"fields":          "*",
-	}, nil)
-	if err != nil {
-		return ""
-	}
-	var lr struct {
-		Items []struct {
-			FileID string `json:"file_id"`
-			Name   string `json:"name"`
-		} `json:"items"`
-	}
-	_ = json.Unmarshal(respData, &lr)
-	for _, it := range lr.Items {
-		if it.Name == name {
-			return it.FileID
+	marker := ""
+	for page := 0; page < 200; page++ {
+		body := map[string]interface{}{
+			"drive_id":        a.extra.DriveID,
+			"parent_file_id":  "root",
+			"limit":           200,
+			"order_by":        "name",
+			"order_direction": "ASC",
+			"fields":          "*",
 		}
+		if marker != "" {
+			body["marker"] = marker
+		}
+		respData, err := a.alipanRequest("POST", alipanAPIBase+"/adrive/v3/file/list", body, nil)
+		if err != nil {
+			return ""
+		}
+		var lr struct {
+			Items []struct {
+				FileID string `json:"file_id"`
+				Name   string `json:"name"`
+				Type   string `json:"type"`
+			} `json:"items"`
+			NextMarker string `json:"next_marker"`
+		}
+		if json.Unmarshal(respData, &lr) != nil {
+			return ""
+		}
+		for _, it := range lr.Items {
+			if it.Name == name && (it.Type == "" || it.Type == "folder") {
+				return it.FileID
+			}
+		}
+		if lr.NextMarker == "" || lr.NextMarker == marker {
+			return ""
+		}
+		marker = lr.NextMarker
 	}
 	return ""
+}
+
+// ensureTransferPromoFolder 确保阿里云盘账号根目录存在固定推广文件夹。
+func (a *AlipanService) ensureTransferPromoFolder() (string, error) {
+	transferPromoFolderMu.Lock()
+	defer transferPromoFolderMu.Unlock()
+
+	if fid := a.findFolderInRoot(transferPromoFolderName); fid != "" {
+		return fid, nil
+	}
+	respData, err := a.alipanRequest("POST", alipanAPIBase+"/adrive/v2/file/createWithFolders", map[string]interface{}{
+		"check_name_mode": "refuse",
+		"drive_id":        a.extra.DriveID,
+		"parent_file_id":  "root",
+		"name":            transferPromoFolderName,
+		"type":            "folder",
+	}, nil)
+	var response struct {
+		FileID  string `json:"file_id"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err == nil {
+		_ = json.Unmarshal(respData, &response)
+	}
+	if err != nil || response.FileID == "" {
+		// 并发创建或同名目录已存在时，重新查询并复用。
+		if fid := a.findFolderInRoot(transferPromoFolderName); fid != "" {
+			return fid, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("创建阿里云盘推广文件夹失败: %w", err)
+		}
+		return "", fmt.Errorf("创建阿里云盘推广文件夹无 file_id: %s %s", response.Code, response.Message)
+	}
+	utils.Info("[Alipan] 已创建根目录推广文件夹 name=%s fid=%s", transferPromoFolderName, response.FileID)
+	return response.FileID, nil
 }
 
 // ============================================================================
@@ -744,9 +796,14 @@ func (a *AlipanService) Transfer(shareID string) (*TransferResult, error) {
 	// 4. 批量转存到 urldb 目录
 	fileIDs := make([]string, 0, len(shareInfo.FileInfos))
 	for _, f := range shareInfo.FileInfos {
-		if f.FileID != "" {
-			fileIDs = append(fileIDs, f.FileID)
+		if f.FileID == "" {
+			continue
 		}
+		if f.Name != "" && containsAdKeywords(f.Name) {
+			utils.Info("[Alipan] 源分享文件命中广告规则，跳过转存 name=%s", f.Name)
+			continue
+		}
+		fileIDs = append(fileIDs, f.FileID)
 	}
 	if len(fileIDs) == 0 {
 		return ErrorResult("分享内无可转存文件"), nil
@@ -760,23 +817,26 @@ func (a *AlipanService) Transfer(shareID string) (*TransferResult, error) {
 
 	// 5. 对【本账号 urldb 目录下的转存文件】创建永久再分享（FR-006/Q2）
 	// 注意：newFileIDs 是 batchCopy 转存后生成的新文件 ID（位于本账号 urldb 目录），不是原分享的文件 ID
-	shareRes, createErr := a.createShare(newFileIDs)
-	shareURL := ""
-	shareTitle := shareInfo.ShareName
+	promoFID, err := a.ensureTransferPromoFolder()
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("创建推广文件夹失败: %v", err)), nil
+	}
+	shareFileIDs, err := appendPanFID(newFileIDs, promoFID)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("添加推广文件夹失败: %v", err)), nil
+	}
+	shareRes, createErr := a.createShare(shareFileIDs)
 	if createErr != nil {
-		// createShare 受阿里云盘签名校验限制（403"升级版本"，需动态 x-signature），降级：
-		// 文件已转存到本账号 urldb 目录（持久备份），用原分享 url 入库，保证转存流程可用。
-		utils.Warn("[Alipan] 创建新分享失败，降级用原分享 url（文件已转存到 urldb 备份）: %v", createErr)
-		if cfg := a.configValue(); cfg != nil {
-			shareURL = cfg.URL
-		}
-	} else {
-		shareURL = shareRes.ShareURL
-		shareTitle = shareRes.ShareTitle
+		return ErrorResult(fmt.Sprintf("转存成功但创建含推广文件夹的分享失败: %v", createErr)), nil
+	}
+	shareURL := shareRes.ShareURL
+	shareTitle := shareRes.ShareTitle
+	if shareTitle == "" {
+		shareTitle = shareInfo.ShareName
 	}
 
 	fid := strings.Join(newFileIDs, ",")
-	utils.Info("[Alipan] 转存完成 shareID=%s shareUrl=%s title=%s fid=%s 新分享创建=%v", shareID, shareURL, shareTitle, fid, createErr == nil)
+	utils.Info("[Alipan] 转存完成 shareID=%s shareUrl=%s title=%s fid=%s", shareID, shareURL, shareTitle, fid)
 	return SuccessResult("转存成功", map[string]interface{}{
 		"shareUrl": shareURL,
 		"title":    shareTitle,
@@ -911,6 +971,30 @@ func (a *AlipanService) createShare(fileIDs []string) (*alipanShareResult, error
 	return &r, nil
 }
 
+// Share 对系统已存文件重新生成阿里云盘分享链接，并附带固定推广文件夹。
+func (a *AlipanService) Share(fid string) (*TransferResult, error) {
+	fileIDs := splitPanFIDs(fid)
+	if len(fileIDs) == 0 {
+		return &TransferResult{Success: false, Message: "fid 为空"}, nil
+	}
+	if err := a.ensureAccessToken(); err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("获取 access_token 失败: %v", err)}, nil
+	}
+	promoFID, err := a.ensureTransferPromoFolder()
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("创建推广文件夹失败: %v", err)}, nil
+	}
+	shareFileIDs, err := appendPanFID(fileIDs, promoFID)
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("添加推广文件夹失败: %v", err)}, nil
+	}
+	shareResult, err := a.createShare(shareFileIDs)
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("创建分享失败: %v", err)}, nil
+	}
+	return &TransferResult{Success: true, ShareURL: shareResult.ShareURL, Title: shareResult.ShareTitle, Fid: fid}, nil
+}
+
 // ============================================================================
 // GetFiles / DeleteFiles（research R8；FR-008）
 // ============================================================================
@@ -988,6 +1072,7 @@ type alipanShareInfo struct {
 	ShareName string `json:"share_name"`
 	FileInfos []struct {
 		FileID string `json:"file_id"`
+		Name   string `json:"name"`
 	} `json:"file_infos"`
 }
 

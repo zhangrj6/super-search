@@ -7,6 +7,7 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -27,6 +28,7 @@ import (
 	"github.com/ctwj/urldb/db"
 	"github.com/ctwj/urldb/db/repo"
 	"github.com/ctwj/urldb/utils"
+	"gorm.io/gorm"
 )
 
 // 全局cron调度器管理
@@ -56,7 +58,7 @@ func baseBinds(vm *goja.Runtime) {
 			return vm.ToValue(nil)
 		}
 		return vm.ToValue(result)
-	})
+		})
 
 	vm.Set("jsonStringify", func(data goja.Value) string {
 		jsonData, err := json.Marshal(data.Export())
@@ -742,7 +744,6 @@ func filesystemBinds(vm *goja.Runtime) {
 	})
 }
 
-
 // formsBinds 表单绑定（简化实现）
 func formsBinds(vm *goja.Runtime) {
 	obj := vm.NewObject()
@@ -1086,6 +1087,9 @@ func cronBinds(app core.App, vm *goja.Runtime, executors *vmsPool, repoManager *
 
 					// 设置当前插件上下文
 					pluginName := extractPluginNameFromCronJob(name)
+					if !shouldRunCronJob(repoManager, name) {
+						return
+					}
 					if pluginName != "" {
 						executor.Set("_currentPluginName", pluginName)
 					} else {
@@ -1141,13 +1145,11 @@ func cronBinds(app core.App, vm *goja.Runtime, executors *vmsPool, repoManager *
 					}
 				}()
 
-				// 检查插件是否启用
+				// 检查插件是否启用并且已经完成配置。未配置的插件在后台视为未启用，
+				// 不应继续执行定时任务并制造失败日志。
 				pluginName := extractPluginNameFromCronJob(name)
-				if repoManager != nil && pluginName != "" {
-					if config, err := repoManager.PluginConfigRepository.GetConfig(pluginName); err == nil && config != nil && !config.Enabled {
-						utils.Debug("Cron job '%s' skipped: plugin '%s' is disabled", name, pluginName)
-						return
-					}
+				if !shouldRunCronJob(repoManager, name) {
+					return
 				}
 
 				executor := executors.Get()
@@ -1380,6 +1382,37 @@ func routerBinds(app core.App, vm *goja.Runtime, executors *vmsPool, repoManager
 		}
 		return nil
 	})
+}
+
+// shouldRunCronJob prevents unconfigured plugins from running scheduled jobs.
+// Installed plugins get a config row during installation, while built-in hooks
+// may not have one yet. Treating a missing row as disabled matches the admin UI
+// and avoids invoking plugin code that requires configuration.
+func shouldRunCronJob(repoManager *repo.RepositoryManager, jobName string) bool {
+	if repoManager == nil || repoManager.PluginConfigRepository == nil {
+		return true
+	}
+
+	pluginName := extractPluginNameFromCronJob(jobName)
+	if pluginName == "" {
+		return true
+	}
+
+	config, err := repoManager.PluginConfigRepository.GetConfig(pluginName)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.Debug("Cron job '%s' skipped: plugin '%s' has no configuration", jobName, pluginName)
+		} else {
+			utils.Warn("Cron job '%s' skipped: failed to load plugin '%s' configuration: %v", jobName, pluginName, err)
+		}
+		return false
+	}
+	if config == nil || !config.Enabled {
+		utils.Debug("Cron job '%s' skipped: plugin '%s' is disabled", jobName, pluginName)
+		return false
+	}
+
+	return true
 }
 
 // extractPluginNameFromCronJob 从cron任务名称中提取插件名称

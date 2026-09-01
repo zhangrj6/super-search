@@ -79,8 +79,8 @@ func InitDB() error {
 	maxIdleConns := getEnvInt("DB_MAX_IDLE_CONNS", 20)
 	connMaxLifetime := getEnvInt("DB_CONN_MAX_LIFETIME_MINUTES", 30)
 
-	sqlDB.SetMaxOpenConns(maxOpenConns)                               // 最大打开连接数
-	sqlDB.SetMaxIdleConns(maxIdleConns)                               // 最大空闲连接数
+	sqlDB.SetMaxOpenConns(maxOpenConns)                                    // 最大打开连接数
+	sqlDB.SetMaxIdleConns(maxIdleConns)                                    // 最大空闲连接数
 	sqlDB.SetConnMaxLifetime(time.Duration(connMaxLifetime) * time.Minute) // 连接最大生命周期
 
 	utils.Info("数据库连接池配置 - 最大连接: %d, 空闲连接: %d, 生命周期: %d分钟",
@@ -111,6 +111,7 @@ func InitDB() error {
 			&entity.APIAccessLogSummary{},
 			&entity.Report{},
 			&entity.CopyrightClaim{},
+			&entity.TransferRecord{},
 			// 插件系统相关表
 			&entity.PluginConfig{},
 			&entity.PluginLog{},
@@ -214,6 +215,7 @@ func autoMigrate() error {
 		&entity.HotDrama{},
 		&entity.File{},
 		&entity.TelegramChannel{},
+		&entity.TransferRecord{},
 		// 插件系统相关表
 		&entity.PluginConfig{},
 		&entity.PluginLog{},

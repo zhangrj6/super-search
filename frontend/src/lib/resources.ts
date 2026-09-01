@@ -1,5 +1,12 @@
 export const PROVIDER_VALUES = [
-  "全部",
+  "夸克网盘",
+  "迅雷云盘",
+] as const;
+
+export type Provider = (typeof PROVIDER_VALUES)[number];
+export const DEFAULT_PROVIDER: Provider = "夸克网盘";
+
+export const DRIVE_PROVIDER_VALUES = [
   "百度网盘",
   "阿里云盘",
   "夸克网盘",
@@ -7,17 +14,17 @@ export const PROVIDER_VALUES = [
   "UC网盘",
 ] as const;
 
-export type Provider = (typeof PROVIDER_VALUES)[number];
-export type DriveProvider = Exclude<Provider, "全部">;
+export type DriveProvider = (typeof DRIVE_PROVIDER_VALUES)[number];
+
+export const SEARCH_MODE_VALUES = ["resource", "video"] as const;
+export type SearchMode = (typeof SEARCH_MODE_VALUES)[number];
+export const DEFAULT_SEARCH_MODE: SearchMode = "resource";
+
 export type ResourceType = "课程" | "视频" | "音频" | "文档" | "素材";
 
 export const PROVIDER_CODES: Record<Provider, string> = {
-  全部: "",
-  百度网盘: "BDY",
-  阿里云盘: "ALY",
   夸克网盘: "QUARK",
   迅雷云盘: "XUNLEI",
-  UC网盘: "UC",
 };
 
 export type ApiEnvelope<T> = {
@@ -40,6 +47,7 @@ export type MelostSearchItem = {
   size: number;
   can_stage: boolean;
   stage_message?: string;
+  source?: "melost" | "xusou" | string;
 };
 
 export type MelostSearchResponse = {
@@ -48,7 +56,12 @@ export type MelostSearchResponse = {
   page_size: number;
   took: number;
   items: MelostSearchItem[];
+  search_type?: SearchMode;
 };
+
+export function isSearchMode(value: string | undefined): value is SearchMode {
+  return SEARCH_MODE_VALUES.some((mode) => mode === value);
+}
 
 export type MelostStageResponse = {
   status: "staged";
@@ -161,9 +174,25 @@ export function formatResourceDate(value: string) {
   }).format(date);
 }
 
+/** Remove known upstream advertising labels from user-visible resource text. */
+export function sanitizeResourceDisplayText(value: string) {
+  return value
+    .replace(/影盘社/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function sanitizeResourceDisplayMessage(value: string) {
+  return sanitizeResourceDisplayText(value)
+    .replace(/转存/g, "获取链接")
+    .trim();
+}
+
 export function resourceTagNames(resource: UrldbResource) {
   return (resource.tags ?? [])
     .map((tag) => tag.name?.trim() ?? "")
+    .map(sanitizeResourceDisplayText)
     .filter(Boolean)
     .slice(0, 6);
 }

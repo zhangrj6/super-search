@@ -1,6 +1,7 @@
 package pan
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -70,6 +71,62 @@ func TestUpdateCookieValue(t *testing.T) {
 			for k, v := range tt.checks {
 				if m[k] != v {
 					t.Fatalf("key %s = %q, want %q (result=%q)", k, m[k], v, got)
+				}
+			}
+		})
+	}
+}
+
+func TestBaiduEnsureTransferPromoFolderIntegration(t *testing.T) {
+	cookie := os.Getenv("BAIDU_TEST_COOKIE")
+	if cookie == "" {
+		t.Skip("BAIDU_TEST_COOKIE is not set")
+	}
+
+	service := NewBaiduPanService(&PanConfig{Cookie: cookie})
+	bdstoken, err := service.getBdstoken()
+	if err != nil {
+		t.Fatalf("getBdstoken() error = %v", err)
+	}
+	fsID, err := service.ensureTransferPromoFolder(bdstoken)
+	if err != nil {
+		t.Fatalf("ensureTransferPromoFolder() error = %v", err)
+	}
+	if fsID == 0 {
+		t.Fatal("ensureTransferPromoFolder() returned an empty fs_id")
+	}
+
+	files, err := service.listDir("/", bdstoken)
+	if err != nil {
+		t.Fatalf("listDir() error = %v", err)
+	}
+	for _, file := range files {
+		if file["server_filename"] == transferPromoFolderName && toInt64(file["isdir"]) == 1 && toInt64(file["fs_id"]) == fsID {
+			return
+		}
+	}
+	t.Fatalf("promotion folder %q (fs_id=%d) was not found in root", transferPromoFolderName, fsID)
+}
+
+func TestSplitBaiduStoredValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  []string
+	}{
+		{name: "numeric ids", value: "123,456", want: []string{"123", "456"}},
+		{name: "multiple paths", value: "/urldb/a.mkv,/urldb/b.pdf", want: []string{"/urldb/a.mkv", "/urldb/b.pdf"}},
+		{name: "comma in filename", value: "/urldb/a,b.mkv,/urldb/c.pdf", want: []string{"/urldb/a,b.mkv", "/urldb/c.pdf"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitBaiduStoredValues(tt.value)
+			if len(got) != len(tt.want) {
+				t.Fatalf("splitBaiduStoredValues(%q) = %v, want %v", tt.value, got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("splitBaiduStoredValues(%q) = %v, want %v", tt.value, got, tt.want)
 				}
 			}
 		})

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	panutils "github.com/ctwj/urldb/common"
@@ -49,12 +50,12 @@ type ResourceLinkService interface {
 }
 
 type resourceLinkServiceImpl struct {
-	cksRepo         repo.CksRepository
-	panRepo         repo.PanRepository
-	configRepo      repo.SystemConfigRepository
-	resourceRepo    repo.ResourceRepository
-	linkCheckService LinkCheckService  // ResolveWithCheck 用（双链接校验 + 回写）
-	meiliManager    *MeilisearchManager // ApplyValidityWriteback 用（同步搜索索引）
+	cksRepo          repo.CksRepository
+	panRepo          repo.PanRepository
+	configRepo       repo.SystemConfigRepository
+	resourceRepo     repo.ResourceRepository
+	linkCheckService LinkCheckService    // ResolveWithCheck 用（双链接校验 + 回写）
+	meiliManager     *MeilisearchManager // ApplyValidityWriteback 用（同步搜索索引）
 }
 
 // NewResourceLinkService 创建取链服务
@@ -96,7 +97,7 @@ func (s *resourceLinkServiceImpl) Resolve(ctx context.Context, resource *entity.
 		return LinkResolution{URL: resource.URL, Type: "original", Platform: platform}, nil
 	}
 	// 执行自动转存
-	res := PerformAutoTransfer(s.cksRepo, s.configRepo, s.resourceRepo, resource)
+	res := PerformAutoTransfer(s.cksRepo, s.configRepo, s.resourceRepo, resource, "resource_link")
 	if res.Success {
 		return LinkResolution{URL: res.SaveURL, Type: "transferred", Platform: platform, Transferred: true, Note: "资源易和谐，请及时转存"}, nil
 	}
@@ -177,7 +178,7 @@ func (s *resourceLinkServiceImpl) ResolveWithCheck(ctx context.Context, resource
 		// saveUrl 确定失效 → 先尝试分享（仅转存平台持有 fid）
 		utils.Info("[RESOURCE_LINK:DEBUG] 决策分支 → saveUrl 失效，触发 PerformShare (resource=%d)", resource.ID)
 		if transferSupported {
-			res := PerformShare(s.cksRepo, s.resourceRepo, resource)
+			res := PerformShare(s.cksRepo, s.resourceRepo, resource, "resource_link")
 			if res.Success {
 				return UnifiedLinkResult{URL: res.SaveURL, Type: "reshared", Platform: platform, Refreshed: true}, nil
 			}
@@ -202,7 +203,7 @@ func (s *resourceLinkServiceImpl) ResolveWithCheck(ctx context.Context, resource
 	if err != nil || !autoTransfer {
 		return UnifiedLinkResult{URL: resource.URL, Type: "original", Platform: platform}, nil
 	}
-	res := PerformAutoTransfer(s.cksRepo, s.configRepo, s.resourceRepo, resource)
+	res := PerformAutoTransfer(s.cksRepo, s.configRepo, s.resourceRepo, resource, "resource_link")
 	if res.Success {
 		return UnifiedLinkResult{URL: res.SaveURL, Type: "transferred", Platform: platform, Note: "资源易和谐，请及时转存", Refreshed: true}, nil
 	}
@@ -214,7 +215,8 @@ func (s *resourceLinkServiceImpl) ResolveWithCheck(ctx context.Context, resource
 
 // PerformAutoTransfer 执行自动转存（由 handlers 迁移，逻辑保持一致）。
 // 传入所需仓库，避免依赖包级 repoManager，便于网页端与机器人共用。
-func PerformAutoTransfer(cksRepo repo.CksRepository, configRepo repo.SystemConfigRepository, resourceRepo repo.ResourceRepository, resource *entity.Resource) TransferResult {
+func PerformAutoTransfer(cksRepo repo.CksRepository, configRepo repo.SystemConfigRepository, resourceRepo repo.ResourceRepository, resource *entity.Resource, triggerSources ...string) TransferResult {
+	startedAt := time.Now()
 	utils.Info("开始执行资源转存 - ID: %d, URL: %s", resource.ID, resource.URL)
 
 	panID := resource.PanID
@@ -265,6 +267,7 @@ func PerformAutoTransfer(cksRepo repo.CksRepository, configRepo repo.SystemConfi
 	result := transferSingle(cksRepo, resource, account, factory)
 
 	if result.Success {
+		previousShareURL := resource.SaveURL
 		// 更新资源的转存信息
 		resource.SaveURL = result.SaveURL
 		resource.Fid = result.Fid
@@ -286,6 +289,22 @@ func PerformAutoTransfer(cksRepo repo.CksRepository, configRepo repo.SystemConfi
 			"last_clean_error_at": nil,
 		}); err != nil {
 			utils.Error("更新资源转存信息失败: %v", err)
+		}
+
+		triggerSource := "auto_transfer"
+		if len(triggerSources) > 0 && strings.TrimSpace(triggerSources[0]) != "" {
+			triggerSource = strings.TrimSpace(triggerSources[0])
+		}
+		if _, err := RecordSuccessfulTransfer(resource, &account, TransferRecordInput{
+			Operation:        entity.TransferOperationTransfer,
+			TriggerSource:    triggerSource,
+			PreviousShareURL: previousShareURL,
+			ResultURL:        result.SaveURL,
+			FileID:           result.Fid,
+			OccurredAt:       now,
+			DurationMS:       time.Since(startedAt).Milliseconds(),
+		}); err != nil {
+			utils.Error("记录转存链路失败 (resource=%d): %v", resource.ID, err)
 		}
 	} else {
 		resource.ErrorMsg = result.ErrorMsg

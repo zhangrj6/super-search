@@ -64,8 +64,9 @@ type ResourceRepository interface {
 	GetTotalCount() (int64, error)
 	GetAllValidResources() ([]entity.Resource, error)
 	// 002-auto-cleanup-transfer 自动清理相关
-	FindDueForCleanup(retentionDays int, limit int) ([]*entity.Resource, error)
+	FindDueForCleanup(retentionMinutes int, limit int) ([]*entity.Resource, error)
 	MarkCleaned(id uint, cleanedAt time.Time) error
+	MarkCleanedIfFileMatches(id uint, fileID string, cleanedAt time.Time) error
 	MarkCleanError(id uint, errMsg string, errAt time.Time) error
 	// UpdateFields 按主键更新指定字段；用于重转等场景部分更新（避免 GORM Updates 跳过零值）
 	UpdateFields(id uint, fields map[string]interface{}) error
@@ -388,11 +389,11 @@ func (r *ResourceRepositoryImpl) SearchWithFilters(params map[string]interface{}
 	if orderByVal, ok := params["order_by"].(string); ok && orderByVal != "" {
 		// 验证排序字段，防止SQL注入
 		validOrderByFields := map[string]bool{
-			"created_at":  true,
-			"updated_at":  true,
-			"view_count":  true,
-			"title":       true,
-			"id":          true,
+			"created_at": true,
+			"updated_at": true,
+			"view_count": true,
+			"title":      true,
+			"id":         true,
 		}
 		if validOrderByFields[orderByVal] {
 			orderBy = orderByVal
@@ -919,15 +920,17 @@ func (r *ResourceRepositoryImpl) GetAllValidResources() ([]entity.Resource, erro
 
 // FindDueForCleanup 查询需要清理的已转存资源
 // 条件：已转存(transferred_at不为空)、未清理(cleaned_at为空)、转存时间超过保留期、有有效 fid、
-//        且无前序清理失败记录(clean_error_msg为空)——已有失败记录的资源不再重试，
-//        避免对永久性失败(如账号已删除)反复重试并副作用刷新 updated_at。
-//        若需让资源重新进入清理队列，应在重新转存时清空 clean_error_msg。
+//
+//	且无前序清理失败记录(clean_error_msg为空)——已有失败记录的资源不再重试，
+//	避免对永久性失败(如账号已删除)反复重试并副作用刷新 updated_at。
+//	若需让资源重新进入清理队列，应在重新转存时清空 clean_error_msg。
+//
 // 使用内存过滤模式以保证跨数据库兼容（参照 telegram_channel_repository.go 的 FindDueForPush）
-func (r *ResourceRepositoryImpl) FindDueForCleanup(retentionDays int, limit int) ([]*entity.Resource, error) {
-	if retentionDays <= 0 {
-		return nil, fmt.Errorf("保留天数必须大于0")
+func (r *ResourceRepositoryImpl) FindDueForCleanup(retentionMinutes int, limit int) ([]*entity.Resource, error) {
+	if retentionMinutes <= 0 {
+		return nil, fmt.Errorf("保留分钟数必须大于0")
 	}
-	threshold := time.Now().AddDate(0, 0, -retentionDays)
+	threshold := time.Now().Add(-time.Duration(retentionMinutes) * time.Minute)
 
 	// 由于不同数据库对指针时间字段的查询行为不一致，
 	// 先查询候选集合（已转存且 fid 不为空），再在内存中过滤
@@ -955,7 +958,7 @@ func (r *ResourceRepositoryImpl) FindDueForCleanup(retentionDays int, limit int)
 		}
 	}
 
-	utils.Debug("FindDueForCleanup: 候选=%d, 命中=%d, 保留期=%d天", len(candidates), len(result), retentionDays)
+	utils.Debug("FindDueForCleanup: 候选=%d, 命中=%d, 保留期=%d分钟", len(candidates), len(result), retentionMinutes)
 	return result, nil
 }
 
@@ -964,12 +967,30 @@ func (r *ResourceRepositoryImpl) MarkCleaned(id uint, cleanedAt time.Time) error
 	// UpdateColumns：清理标记不应触发 GORM autoUpdateTime 推进 updated_at，
 	// 否则被清理任务反复处理的资源 updated_at 会被持续刷新，污染首页排序与详情页时间展示。
 	return r.db.Model(&entity.Resource{}).Where("id = ?", id).UpdateColumns(map[string]interface{}{
-		"fid":              "",
-		"save_url":         "",
-		"cleaned_at":       cleanedAt,
-		"clean_error_msg":  "",
+		"fid":                 "",
+		"save_url":            "",
+		"cleaned_at":          cleanedAt,
+		"clean_error_msg":     "",
 		"last_clean_error_at": nil,
 	}).Error
+}
+
+// MarkCleanedIfFileMatches only clears the resource when it still references
+// the file that was deleted. A newer transfer must not be erased by an older
+// cleanup record finishing concurrently.
+func (r *ResourceRepositoryImpl) MarkCleanedIfFileMatches(id uint, fileID string, cleanedAt time.Time) error {
+	if id == 0 || fileID == "" {
+		return nil
+	}
+	return r.db.Model(&entity.Resource{}).
+		Where("id = ? AND fid = ?", id, fileID).
+		UpdateColumns(map[string]interface{}{
+			"fid":                 "",
+			"save_url":            "",
+			"cleaned_at":          cleanedAt,
+			"clean_error_msg":     "",
+			"last_clean_error_at": nil,
+		}).Error
 }
 
 // MarkCleanError 标记资源清理失败：记录失败原因和时间，不清空转存字段。
@@ -982,7 +1003,7 @@ func (r *ResourceRepositoryImpl) MarkCleanError(id uint, errMsg string, errAt ti
 		errMsg = errMsg[:255]
 	}
 	return r.db.Model(&entity.Resource{}).Where("id = ?", id).UpdateColumns(map[string]interface{}{
-		"clean_error_msg":    errMsg,
+		"clean_error_msg":     errMsg,
 		"last_clean_error_at": errAt,
 	}).Error
 }

@@ -96,3 +96,24 @@ describe('阿里云盘: 选中后呈现 refresh_token 字段（feature 008）', 
     expect(src).toMatch(/Refresh Token/)
   })
 })
+
+describe('迅雷云盘: 仅接受网页版 refresh_token', () => {
+  it('必须存在网页版 refresh_token 输入与获取提示', () => {
+    const src = source()
+    expect(src).toMatch(/<div\s+v-if="isXunlei"/)
+    expect(src).toMatch(/网页版 Refresh Token/)
+    expect(src).toMatch(/pan\.xunlei\.com/)
+    expect(src).toMatch(/xluser-ssl\.xunlei\.com\/v1\/auth\/token/)
+  })
+
+  it('不得继续提交移动端 client_type 或账号密码凭据', () => {
+    const src = source()
+    expect(src).not.toMatch(/xunleiForm\.clientType/)
+    expect(src).not.toMatch(/xunleiForm\.(username|password|creditkey)/)
+    expect(src).not.toMatch(/client_type:\s*['"]android['"]/)
+  })
+
+  it('提交时必须将解析后的 refresh_token 直接写入 ck', () => {
+    expect(source()).toMatch(/form\.value\.ck\s*=\s*token/)
+  })
+})

@@ -11,6 +11,7 @@ import (
 	pan "github.com/ctwj/urldb/common"
 	"github.com/ctwj/urldb/db/entity"
 	"github.com/ctwj/urldb/db/repo"
+	"github.com/ctwj/urldb/services"
 	"github.com/ctwj/urldb/utils"
 )
 
@@ -153,7 +154,7 @@ func (tp *TransferProcessor) Process(ctx context.Context, taskID uint, item *ent
 
 	// 执行转存操作
 	transferStart := utils.GetCurrentTime()
-	resourceID, saveURL, err := tp.performTransfer(ctx, &input, cks, existingResource)
+	resourceID, saveURL, err := tp.performTransfer(ctx, taskID, item.ID, &input, cks, existingResource)
 	transferDuration := time.Since(transferStart)
 	if err != nil {
 		// 转存失败，更新输出数据
@@ -237,11 +238,11 @@ func (tp *TransferProcessor) validateInput(input *TransferInput) error {
 // isValidURL 验证URL格式
 func (tp *TransferProcessor) isValidURL(url string) bool {
 	patterns := []string{
-		`https://pan\.quark\.cn/s/[a-zA-Z0-9]+`,        // 夸克网盘
-		`https://pan\.xunlei\.com/s/.+`,                // 迅雷网盘
-		`https?://pan\.baidu\.com/s/[a-zA-Z0-9_-]+`,    // 百度网盘 /s/ 格式
-		`https?://pan\.baidu\.com/share/init\?surl=.+`, // 百度网盘 /share/init?surl= 格式
-		`https?://(drive|fast)\.uc\.cn/.+`,             // UC网盘
+		`https://pan\.quark\.cn/s/[a-zA-Z0-9]+`,                     // 夸克网盘
+		`https://pan\.xunlei\.com/s/.+`,                             // 迅雷网盘
+		`https?://pan\.baidu\.com/s/[a-zA-Z0-9_-]+`,                 // 百度网盘 /s/ 格式
+		`https?://pan\.baidu\.com/share/init\?surl=.+`,              // 百度网盘 /share/init?surl= 格式
+		`https?://(drive|fast)\.uc\.cn/.+`,                          // UC网盘
 		`https?://(www\.)?(alipan|aliyundrive)\.com/s/[a-zA-Z0-9]+`, // 阿里云盘
 	}
 	for _, pattern := range patterns {
@@ -269,10 +270,10 @@ func (tp *TransferProcessor) checkResourceExists(url string) (bool, *entity.Reso
 }
 
 // performTransfer 执行转存操作
-// existing 非空表示系统中已存在该 URL 的 resource（重转场景）—— 此时走 Update 路径并写入
-// transferred_at，允许自动清理调度回收网盘文件；existing 为空表示全新 URL，走 Create 路径，
-// 不写 transferred_at，避免清理服务误删用户主动入库的资源。
-func (tp *TransferProcessor) performTransfer(ctx context.Context, input *TransferInput, cks []*entity.Cks, existing *entity.Resource) (uint, string, error) {
+// Every successful transfer is a temporary cloud copy. Both new and existing
+// resources enter the fixed 10-minute cleanup queue and receive an audit row.
+func (tp *TransferProcessor) performTransfer(ctx context.Context, taskID, taskItemID uint, input *TransferInput, cks []*entity.Cks, existing *entity.Resource) (uint, string, error) {
+	startedAt := time.Now()
 	// 从 cks 中，挑选出，能够转存的账号，
 	urlType := pan.ExtractServiceType(input.URL)
 	if urlType == pan.NotFound {
@@ -353,21 +354,19 @@ func (tp *TransferProcessor) performTransfer(ctx context.Context, input *Transfe
 
 	now := time.Now()
 
-	// 分两种情况：
-	// (1) existing != nil：系统中已存在该 URL（来自 telegram 抓取等），转存为中转备份，需要写入
-	//     transferred_at，让清理调度器到期回收；走 Update 避免重复 Create。
-	// (2) existing == nil：用户在数据转存管理界面主动粘贴的全新链接，转存结果就是最终落地，
-	//     不应被自动清理 → 不写 transferred_at；走 Create。
 	var resourceID uint
+	var auditResource *entity.Resource
+	var previousShareURL string
 	if existing != nil {
+		previousShareURL = existing.SaveURL
 		// 重转：更新现有 resource。只更新转存相关字段，避免覆盖 Title/Category/Tags 等已有信息。
 		if err := tp.repoMgr.ResourceRepository.UpdateFields(existing.ID, map[string]interface{}{
-			"save_url":      saveData.SaveURL,
-			"fid":           saveData.Fid,
-			"ck_id":         accountID,
+			"save_url":       saveData.SaveURL,
+			"fid":            saveData.Fid,
+			"ck_id":          accountID,
 			"transferred_at": now,
-			"error_msg":     "",
-			"updated_at":    now,
+			"error_msg":      "",
+			"updated_at":     now,
 			// 重转产生了新 fid，必须重置清理标记，否则旧的 cleaned_at 会让
 			// FindDueForCleanup（条件 cleaned_at IS NULL）跳过它，导致新文件永远不会被自动清理。
 			"cleaned_at":          nil,
@@ -378,6 +377,11 @@ func (tp *TransferProcessor) performTransfer(ctx context.Context, input *Transfe
 			return 0, "", fmt.Errorf("更新资源失败: %v", err)
 		}
 		resourceID = existing.ID
+		existing.SaveURL = saveData.SaveURL
+		existing.Fid = saveData.Fid
+		existing.CkID = &accountID
+		existing.TransferredAt = &now
+		auditResource = existing
 		utils.Info("转存成功，资源已更新 - 资源ID: %d, 转存链接: %s", resourceID, saveData.SaveURL)
 	} else {
 		// 生成 6 位 Base62 唯一 key（供 /r/:key 短链访问）。失败时回退到无 key 继续，
@@ -388,17 +392,17 @@ func (tp *TransferProcessor) performTransfer(ctx context.Context, input *Transfe
 		}
 
 		resource := &entity.Resource{
-			Title:      input.Title,
-			URL:        input.URL,
-			CategoryID: categoryID,
-			PanID:      &panIdInt,        // 设置平台ID
-			CkID:       &accountID,       // 绑定转存账号（cleanup 删除时据此解析 cookie）
-			SaveURL:    saveData.SaveURL, // 直接设置转存链接
-			Fid:        saveData.Fid,     // 记录转存文件ID（清理时依据）
-			Key:        key,
-			// 注意：不写 TransferredAt —— 新建资源不应被自动清理
-			CreatedAt: now,
-			UpdatedAt: now,
+			Title:         input.Title,
+			URL:           input.URL,
+			CategoryID:    categoryID,
+			PanID:         &panIdInt,        // 设置平台ID
+			CkID:          &accountID,       // 绑定转存账号（cleanup 删除时据此解析 cookie）
+			SaveURL:       saveData.SaveURL, // 直接设置转存链接
+			Fid:           saveData.Fid,     // 记录转存文件ID（清理时依据）
+			Key:           key,
+			TransferredAt: &now,
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		}
 
 		if err := tp.repoMgr.ResourceRepository.Create(resource); err != nil {
@@ -406,6 +410,7 @@ func (tp *TransferProcessor) performTransfer(ctx context.Context, input *Transfe
 			return 0, "", fmt.Errorf("保存资源失败: %v", err)
 		}
 		resourceID = resource.ID
+		auditResource = resource
 
 		// 添加标签关联（仅新建场景；重转时原 resource 已有 tags）
 		if len(input.Tags) > 0 {
@@ -415,7 +420,25 @@ func (tp *TransferProcessor) performTransfer(ctx context.Context, input *Transfe
 			}
 		}
 
-		utils.Info("转存成功，资源已创建（不纳入自动清理）- 资源ID: %d, 转存链接: %s", resourceID, saveData.SaveURL)
+		utils.Info("转存成功，资源已创建并进入自动清理队列 - 资源ID: %d, 转存链接: %s", resourceID, saveData.SaveURL)
+	}
+
+	if auditResource != nil {
+		taskIDCopy := taskID
+		taskItemIDCopy := taskItemID
+		if _, err := services.RecordSuccessfulTransfer(auditResource, selectedAcc, services.TransferRecordInput{
+			Operation:        entity.TransferOperationTransfer,
+			TriggerSource:    "admin_transfer_task",
+			PreviousShareURL: previousShareURL,
+			ResultURL:        saveData.SaveURL,
+			FileID:           saveData.Fid,
+			OccurredAt:       now,
+			TaskID:           &taskIDCopy,
+			TaskItemID:       &taskItemIDCopy,
+			DurationMS:       time.Since(startedAt).Milliseconds(),
+		}); err != nil {
+			utils.Error("记录任务转存链路失败 (task=%d, item=%d, resource=%d): %v", taskID, taskItemID, resourceID, err)
+		}
 	}
 
 	return resourceID, saveData.SaveURL, nil
@@ -549,7 +572,7 @@ func (tp *TransferProcessor) getQuarkPanID() (uint, error) {
 type TransferResult struct {
 	Success  bool   `json:"success"`
 	SaveURL  string `json:"save_url"`
-	Fid      string `json:"fid`
+	Fid      string `json:"fid"`
 	ErrorMsg string `json:"error_msg"`
 }
 

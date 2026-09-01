@@ -10,12 +10,12 @@ var _ = services.NewCleanupService // 保留 services 导入（用于内部创�
 
 // Manager 调度器管理器
 type Manager struct {
-	baseScheduler          *BaseScheduler
-	hotDramaScheduler      *HotDramaScheduler
-	readyResourceScheduler *ReadyResourceScheduler
-	sitemapScheduler       *SitemapScheduler
-	googleIndexScheduler   *GoogleIndexScheduler
-	cleanupScheduler       *CleanupScheduler
+	baseScheduler            *BaseScheduler
+	hotDramaScheduler        *HotDramaScheduler
+	readyResourceScheduler   *ReadyResourceScheduler
+	sitemapScheduler         *SitemapScheduler
+	googleIndexScheduler     *GoogleIndexScheduler
+	cleanupScheduler         *CleanupScheduler
 	xunleiKeepaliveScheduler *XunleiKeepaliveScheduler
 }
 
@@ -31,6 +31,7 @@ func NewManager(
 	categoryRepo repo.CategoryRepository,
 	taskItemRepo repo.TaskItemRepository,
 	taskRepo repo.TaskRepository,
+	transferRecordRepos ...repo.TransferRecordRepository,
 ) *Manager {
 	// 创建基础调度器
 	baseScheduler := NewBaseScheduler(
@@ -45,7 +46,7 @@ func NewManager(
 	)
 
 	// 创建清理服务（依赖 ResourceRepository/SystemConfigRepository/CksRepository/PanRepository）
-	cleanupService := services.NewCleanupService(resourceRepo, systemConfigRepo, cksRepo, panRepo)
+	cleanupService := services.NewCleanupService(resourceRepo, systemConfigRepo, cksRepo, panRepo, transferRecordRepos...)
 
 	// 创建各个具体的调度器
 	hotDramaScheduler := NewHotDramaScheduler(baseScheduler)
@@ -100,6 +101,9 @@ func (m *Manager) StopAll() {
 
 	// 停止迅雷 token 保活任务
 	m.xunleiKeepaliveScheduler.Stop()
+
+	// 停止转存文件自动清理任务
+	m.StopCleanupScheduler()
 
 	utils.Debug("所有调度任务已停止")
 }

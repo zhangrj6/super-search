@@ -172,8 +172,19 @@ func (q *QuarkPanService) Transfer(shareID string) (*TransferResult, error) {
 	title := shareResult.Share.Title
 
 	for _, item := range shareResult.List {
+		fileName := item.FileName
+		if fileName == "" {
+			fileName = item.Name
+		}
+		if fileName != "" && q.containsAdKeywords(fileName) {
+			log.Printf("源分享文件命中广告规则，跳过转存: %s", fileName)
+			continue
+		}
 		fidList = append(fidList, item.Fid)
 		fidTokenList = append(fidTokenList, item.ShareFidToken)
+	}
+	if len(fidList) == 0 {
+		return ErrorResult("分享内文件均被广告规则过滤"), nil
 	}
 
 	// 转存资源
@@ -189,10 +200,15 @@ func (q *QuarkPanService) Transfer(shareID string) (*TransferResult, error) {
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("等待转存完成失败: %v", err)), nil
 	}
+	if len(myData.SaveAs.SaveAsTopFids) == 0 {
+		return ErrorResult("转存完成但未获取到文件标识"), nil
+	}
 
-	// 删除广告文件（如果有配置）
-	if err := q.deleteAdFiles(myData.SaveAs.SaveAsTopFids[0]); err != nil {
-		log.Printf("删除广告文件失败: %v", err)
+	// 删除广告文件（如果有配置）。遍历所有顶层目录，避免只清理第一个目录。
+	for _, topFID := range myData.SaveAs.SaveAsTopFids {
+		if err := q.deleteAdFiles(topFID); err != nil {
+			log.Printf("删除广告文件失败: %v", err)
+		}
 	}
 
 	// 添加个人自定义广告
@@ -200,8 +216,17 @@ func (q *QuarkPanService) Transfer(shareID string) (*TransferResult, error) {
 		log.Printf("添加广告文件失败: %v", err)
 	}
 
+	promoFID, err := q.ensureTransferPromoFolder()
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("创建推广文件夹失败: %v", err)), nil
+	}
+	shareFIDs, err := appendPanFID(myData.SaveAs.SaveAsTopFids, promoFID)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("添加推广文件夹失败: %v", err)), nil
+	}
+
 	// 分享资源
-	shareBtnResult, err := q.getShareBtn(myData.SaveAs.SaveAsTopFids, title)
+	shareBtnResult, err := q.getShareBtn(shareFIDs, title)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("分享失败: %v", err)), nil
 	}
@@ -223,7 +248,7 @@ func (q *QuarkPanService) Transfer(shareID string) (*TransferResult, error) {
 	if len(myData.SaveAs.SaveAsTopFids) > 1 {
 		fid = strings.Join(myData.SaveAs.SaveAsTopFids, ",")
 	} else {
-		fid = passwordResult.FirstFile.Fid
+		fid = myData.SaveAs.SaveAsTopFids[0]
 	}
 
 	return SuccessResult("转存成功", map[string]interface{}{
@@ -287,11 +312,13 @@ func (q *QuarkPanService) DeleteFiles(fileList []string) (*TransferResult, error
 	}
 
 	// 逐个删除文件，确保每个删除操作都完成
-	for _, fileID := range fileList {
-		err := q.deleteSingleFile(fileID)
-		if err != nil {
-			log.Printf("删除文件 %s 失败: %v", fileID, err)
-			return ErrorResult(fmt.Sprintf("删除文件 %s 失败: %v", fileID, err)), nil
+	for _, value := range fileList {
+		for _, fileID := range splitPanFIDs(value) {
+			err := q.deleteSingleFile(fileID)
+			if err != nil {
+				log.Printf("删除文件 %s 失败: %v", fileID, err)
+				return ErrorResult(fmt.Sprintf("删除文件 %s 失败: %v", fileID, err)), nil
+			}
 		}
 	}
 
@@ -519,7 +546,9 @@ func (q *QuarkPanService) getShareBtn(fidList []string, title string) (*ShareBtn
 
 // Share 对系统已存文件按 fid 重新生成夸克分享链接（实现 Sharer，FR-015）。
 // 夸克分享为异步任务，流程须与 Transfer 的分享段完全对齐：
-//   getShareBtn 创建任务 → waitForTask 轮询直到 Status==2 拿 share_id → getSharePassword 取最终 ShareURL。
+//
+//	getShareBtn 创建任务 → waitForTask 轮询直到 Status==2 拿 share_id → getSharePassword 取最终 ShareURL。
+//
 // 早期实现只看 share_id 非空就返回、且跳过 getSharePassword，会在任务尚未完成时拿到未生效的 share_id，
 // 导致拼出的链接打开是「已删除」状态。此处复用 waitForTask（检查 Status==2）+ getSharePassword 修复。
 // 失败时由调用方（决策树）回退到「判原始→转存」，故此处失败是安全的降级。
@@ -527,7 +556,15 @@ func (q *QuarkPanService) Share(fid string) (*TransferResult, error) {
 	if fid == "" {
 		return &TransferResult{Success: false, Message: "fid 为空"}, nil
 	}
-	btn, err := q.getShareBtn([]string{fid}, "资源分享")
+	promoFID, err := q.ensureTransferPromoFolder()
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("创建推广文件夹失败: %v", err)}, nil
+	}
+	shareFIDs, err := appendPanFID(splitPanFIDs(fid), promoFID)
+	if err != nil {
+		return &TransferResult{Success: false, Message: fmt.Sprintf("添加推广文件夹失败: %v", err)}, nil
+	}
+	btn, err := q.getShareBtn(shareFIDs, "资源分享")
 	if err != nil {
 		return &TransferResult{Success: false, Message: fmt.Sprintf("创建分享失败: %v", err)}, nil
 	}
@@ -648,6 +685,13 @@ func (q *QuarkPanService) waitForTask(taskID string) (*TaskResult, error) {
 
 // deleteAdFiles 删除广告文件
 func (q *QuarkPanService) deleteAdFiles(pdirFid string) error {
+	return q.deleteAdFilesRecursive(pdirFid, 0)
+}
+
+func (q *QuarkPanService) deleteAdFilesRecursive(pdirFid string, depth int) error {
+	if depth > 16 {
+		return fmt.Errorf("广告目录递归深度超过限制")
+	}
 	log.Printf("开始删除广告文件，目录ID: %s", pdirFid)
 
 	// 获取目录文件列表
@@ -662,9 +706,13 @@ func (q *QuarkPanService) deleteAdFiles(pdirFid string) error {
 		return nil
 	}
 
-	// 删除包含广告关键词的文件
+	// 删除命中文件，并递归检查子目录，避免广告文件藏在资源目录内漏删。
 	for _, file := range fileList {
-		if fileName, ok := file["file_name"].(string); ok {
+		fileName, _ := file["file_name"].(string)
+		if fileName == "" {
+			fileName, _ = file["name"].(string)
+		}
+		if fileName != "" {
 			log.Printf("检查文件: %s", fileName)
 			if q.containsAdKeywords(fileName) {
 				if fid, ok := file["fid"].(string); ok {
@@ -676,6 +724,14 @@ func (q *QuarkPanService) deleteAdFiles(pdirFid string) error {
 						log.Printf("成功删除广告文件: %s", fileName)
 					}
 				}
+				continue
+			}
+		}
+		if isPanDirectory(file) {
+			if fid, ok := file["fid"].(string); ok {
+				if err := q.deleteAdFilesRecursive(fid, depth+1); err != nil {
+					log.Printf("递归清理广告文件失败: %v", err)
+				}
 			}
 		}
 	}
@@ -685,37 +741,12 @@ func (q *QuarkPanService) deleteAdFiles(pdirFid string) error {
 
 // containsAdKeywords 检查文件名是否包含广告关键词
 func (q *QuarkPanService) containsAdKeywords(filename string) bool {
-	// 从系统配置中获取广告关键词
-	adKeywordsStr, err := q.getSystemConfigValue(entity.ConfigKeyAdKeywords)
-	if err != nil {
-		log.Printf("获取广告关键词配置失败: %v", err)
-		return false
-	}
-
-	// 如果配置为空，返回false
-	if adKeywordsStr == "" {
-		return false
-	}
-
-	// 按逗号分割关键词（支持中文和英文逗号）
-	adKeywords := q.splitKeywords(adKeywordsStr)
-
-	return q.checkKeywordsInFilename(filename, adKeywords)
+	return containsAdKeywords(filename)
 }
 
 // checkKeywordsInFilename 检查文件名是否包含指定关键词
 func (q *QuarkPanService) checkKeywordsInFilename(filename string, keywords []string) bool {
-	// 转为小写进行比较
-	lowercaseFilename := strings.ToLower(filename)
-
-	for _, keyword := range keywords {
-		if strings.Contains(lowercaseFilename, strings.ToLower(keyword)) {
-			log.Printf("文件 %s 包含广告关键词: %s", filename, keyword)
-			return true
-		}
-	}
-
-	return false
+	return checkAdKeywordsInFilename(filename, keywords)
 }
 
 // getSystemConfigValue 获取系统配置值
@@ -815,6 +846,62 @@ func (q *QuarkPanService) extractAdFileIDs(adURLs []string) []string {
 	return result
 }
 
+// ensureTransferPromoFolder 确保账号根目录存在固定推广文件夹，并返回其 FID。
+func (q *QuarkPanService) ensureTransferPromoFolder() (string, error) {
+	transferPromoFolderMu.Lock()
+	defer transferPromoFolderMu.Unlock()
+
+	files, err := q.getDirFile("0")
+	if err != nil {
+		return "", fmt.Errorf("检查根目录失败: %w", err)
+	}
+	for _, file := range files {
+		fileName, _ := file["file_name"].(string)
+		if fileName == "" {
+			fileName, _ = file["name"].(string)
+		}
+		if fileName == transferPromoFolderName && isPanDirectory(file) {
+			if fid, ok := file["fid"].(string); ok && fid != "" {
+				return fid, nil
+			}
+		}
+	}
+
+	data := map[string]interface{}{
+		"pdir_fid":      "0",
+		"file_name":     transferPromoFolderName,
+		"dir_path":      "",
+		"dir_init_lock": false,
+	}
+	queryParams := map[string]string{
+		"pr":           "ucpro",
+		"fr":           "pc",
+		"uc_param_str": "",
+	}
+	respData, err := q.HTTPPost("https://drive-pc.quark.cn/1/clouddrive/file", data, queryParams)
+	if err != nil {
+		return "", fmt.Errorf("创建根目录推广文件夹失败: %w", err)
+	}
+	var response struct {
+		Status  int    `json:"status"`
+		Message string `json:"message"`
+		Data    struct {
+			Fid string `json:"fid"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respData, &response); err != nil {
+		return "", fmt.Errorf("解析创建文件夹响应失败: %w", err)
+	}
+	if response.Status != 200 {
+		return "", fmt.Errorf("创建文件夹失败: status=%d message=%s", response.Status, response.Message)
+	}
+	if response.Data.Fid == "" {
+		return "", fmt.Errorf("创建文件夹成功但未返回 FID")
+	}
+	log.Printf("已创建根目录推广文件夹: %s (FID: %s)", transferPromoFolderName, response.Data.Fid)
+	return response.Data.Fid, nil
+}
+
 // addAd 添加个人自定义广告
 func (q *QuarkPanService) addAd(dirID string) error {
 	log.Printf("开始添加个人自定义广告到目录: %s", dirID)
@@ -898,43 +985,49 @@ func (q *QuarkPanService) addAd(dirID string) error {
 func (q *QuarkPanService) getDirFile(pdirFid string) ([]map[string]interface{}, error) {
 	log.Printf("正在遍历父文件夹: %s", pdirFid)
 
-	queryParams := map[string]string{
-		"pr":              "ucpro",
-		"fr":              "pc",
-		"uc_param_str":    "",
-		"pdir_fid":        pdirFid,
-		"_page":           "1",
-		"_size":           "50",
-		"_fetch_total":    "1",
-		"_fetch_sub_dirs": "0",
-		"_sort":           "updated_at:desc",
-	}
+	const pageSize = 50
+	var result []map[string]interface{}
+	for page := 1; page <= 200; page++ {
+		queryParams := map[string]string{
+			"pr":              "ucpro",
+			"fr":              "pc",
+			"uc_param_str":    "",
+			"pdir_fid":        pdirFid,
+			"_page":           strconv.Itoa(page),
+			"_size":           strconv.Itoa(pageSize),
+			"_fetch_total":    "1",
+			"_fetch_sub_dirs": "0",
+			"_sort":           "updated_at:desc",
+		}
 
-	respData, err := q.HTTPGet("https://drive-pc.quark.cn/1/clouddrive/file/sort", queryParams)
-	if err != nil {
-		log.Printf("获取目录文件失败: %v", err)
-		return nil, err
-	}
+		respData, err := q.HTTPGet("https://drive-pc.quark.cn/1/clouddrive/file/sort", queryParams)
+		if err != nil {
+			log.Printf("获取目录文件失败: %v", err)
+			return nil, err
+		}
 
-	var response struct {
-		Status  int    `json:"status"`
-		Message string `json:"message"`
-		Data    struct {
-			List []map[string]interface{} `json:"list"`
-		} `json:"data"`
-	}
+		var response struct {
+			Status  int    `json:"status"`
+			Message string `json:"message"`
+			Data    struct {
+				List []map[string]interface{} `json:"list"`
+			} `json:"data"`
+		}
 
-	if err := json.Unmarshal(respData, &response); err != nil {
-		log.Printf("解析目录文件响应失败: %v", err)
-		return nil, err
-	}
+		if err := json.Unmarshal(respData, &response); err != nil {
+			log.Printf("解析目录文件响应失败: %v", err)
+			return nil, err
+		}
+		if response.Status != 200 {
+			return nil, fmt.Errorf("获取目录文件失败: status=%d message=%s", response.Status, response.Message)
+		}
 
-	if response.Status != 200 {
-		return nil, fmt.Errorf(response.Message)
+		result = append(result, response.Data.List...)
+		if len(response.Data.List) < pageSize {
+			return result, nil
+		}
 	}
-
-	// 直接返回文件列表，不递归处理子目录（与参考代码保持一致）
-	return response.Data.List, nil
+	return nil, fmt.Errorf("目录文件超过分页上限: pdir_fid=%s", pdirFid)
 }
 
 // 定义各种结果结构体
@@ -950,6 +1043,8 @@ type ShareResult struct {
 	List []struct {
 		Fid           string `json:"fid"`
 		ShareFidToken string `json:"share_fid_token"`
+		FileName      string `json:"file_name"`
+		Name          string `json:"name"`
 	} `json:"list"`
 }
 

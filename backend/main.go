@@ -108,6 +108,10 @@ func main() {
 
 	// 创建Repository管理器
 	repoManager := repo.NewRepositoryManager(db.DB)
+	services.SetDefaultTransferRecordService(services.NewTransferRecordService(
+		repoManager.TransferRecordRepository,
+		repoManager.PanRepository,
+	))
 
 	// 创建配置管理器
 	configManager := config.NewConfigManager(repoManager)
@@ -251,6 +255,7 @@ func main() {
 		repoManager.CategoryRepository,
 		repoManager.TaskItemRepository,
 		repoManager.TaskRepository,
+		repoManager.TransferRecordRepository,
 	)
 
 	// 根据系统配置启动相应的调度任务
@@ -259,7 +264,6 @@ func main() {
 	autoTransferEnabled, _ := repoManager.SystemConfigRepository.GetConfigBool(entity.ConfigKeyAutoTransferEnabled)
 	autoSitemapEnabled, _ := repoManager.SystemConfigRepository.GetConfigBool(entity.ConfigKeySitemapAutoGenerateEnabled)
 	autoGoogleIndexEnabled, _ := repoManager.SystemConfigRepository.GetConfigBool(entity.GoogleIndexConfigKeyEnabled)
-	autoCleanupEnabled, _ := repoManager.SystemConfigRepository.GetConfigBool(entity.ConfigKeyAutoCleanupEnabled)
 
 	globalScheduler.UpdateSchedulerStatusWithAutoTransfer(
 		autoFetchHotDrama,
@@ -267,13 +271,8 @@ func main() {
 		autoTransferEnabled,
 	)
 
-	// 根据系统配置启动转存文件自动清理调度器（002-auto-cleanup-transfer）
-	if autoCleanupEnabled {
-		globalScheduler.StartCleanupScheduler()
-		utils.Info("系统配置启用转存文件自动清理功能，启动定时任务")
-	} else {
-		utils.Info("系统配置禁用转存文件自动清理功能")
-	}
+	globalScheduler.StartCleanupScheduler()
+	utils.Info("转存文件固定清理策略已启用：保留 10 分钟，每分钟扫描")
 
 	// 根据系统配置启动Sitemap调度器
 	if autoSitemapEnabled {
@@ -379,8 +378,8 @@ func main() {
 
 		// 搜索
 		api.GET("/search", handlers.SearchResources)
-		api.POST("/melost/search", melostHandler.Search)
-		api.POST("/melost/resources", melostHandler.StageResource)
+		api.POST("/search", melostHandler.Search)
+		api.POST("/resources/stage", melostHandler.StageResource)
 
 		// 统计
 		api.GET("/stats", handlers.GetStats)
@@ -453,6 +452,11 @@ func main() {
 		api.GET("/api-access-logs/summary", middleware.AuthMiddleware(), middleware.AdminMiddleware(), handlers.GetAPIAccessLogSummary)
 		api.GET("/api-access-logs/stats", middleware.AuthMiddleware(), middleware.AdminMiddleware(), handlers.GetAPIAccessLogStats)
 		api.DELETE("/api-access-logs", middleware.AuthMiddleware(), middleware.AdminMiddleware(), handlers.ClearAPIAccessLogs)
+
+		// 转存与分享链路审计（只读，记录永久保留）
+		api.GET("/transfer-records", middleware.AuthMiddleware(), middleware.AdminMiddleware(), handlers.GetTransferRecords)
+		api.GET("/transfer-records/summary", middleware.AuthMiddleware(), middleware.AdminMiddleware(), handlers.GetTransferRecordSummary)
+		api.GET("/transfer-records/:id", middleware.AuthMiddleware(), middleware.AdminMiddleware(), handlers.GetTransferRecord)
 
 		// 系统日志路由
 		api.GET("/system-logs", middleware.AuthMiddleware(), middleware.AdminMiddleware(), handlers.GetSystemLogs)

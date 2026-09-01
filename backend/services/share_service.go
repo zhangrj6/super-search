@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	panutils "github.com/ctwj/urldb/common"
@@ -12,9 +13,10 @@ import (
 
 // PerformShare 对系统已存文件按 fid 重新生成分享链接（saveUrl 失效时的恢复操作，FR-015）。
 // 镜像 PerformAutoTransfer 的结构：按 resource.CkID 取持有账号 → 创建网盘服务 → 类型断言 Sharer → Share(fid)。
-// 仅回写 save_url（刷新链接）；不改 fid/ck_id/transferred_at（文件未变，自动清理计时不重置）。
+// 刷新 save_url 后会重置 10 分钟清理计时，并追加一条永久分享审计记录。
 // 失败时调用方（决策树 ResolveWithCheck）会回退到「判原始→转存」，故此处失败是安全的降级。
-func PerformShare(cksRepo repo.CksRepository, resourceRepo repo.ResourceRepository, resource *entity.Resource) TransferResult {
+func PerformShare(cksRepo repo.CksRepository, resourceRepo repo.ResourceRepository, resource *entity.Resource, triggerSources ...string) TransferResult {
+	startedAt := time.Now()
 	if resource == nil {
 		return TransferResult{Success: false, ErrorMsg: "resource 为空"}
 	}
@@ -58,17 +60,38 @@ func PerformShare(cksRepo repo.CksRepository, resourceRepo repo.ResourceReposito
 		return TransferResult{Success: false, ErrorMsg: msg}
 	}
 
-	// 仅刷新 save_url（文件未变，不重置 transferred_at/fid/ck_id）
+	previousShareURL := resource.SaveURL
 	now := time.Now()
 	resource.SaveURL = result.ShareURL
+	resource.TransferredAt = &now
 	if err := resourceRepo.UpdateFields(resource.ID, map[string]interface{}{
-		"save_url":   result.ShareURL,
-		"updated_at": now,
+		"save_url":            result.ShareURL,
+		"transferred_at":      now,
+		"updated_at":          now,
+		"cleaned_at":          nil,
+		"clean_error_msg":     "",
+		"last_clean_error_at": nil,
 	}); err != nil {
 		utils.Error("[SHARE] 更新 save_url 失败: %v", err)
 		return TransferResult{Success: false, ErrorMsg: fmt.Sprintf("更新 save_url 失败: %v", err)}
 	}
 
+	triggerSource := "reshare"
+	if len(triggerSources) > 0 && strings.TrimSpace(triggerSources[0]) != "" {
+		triggerSource = strings.TrimSpace(triggerSources[0])
+	}
+	if _, err := RecordSuccessfulTransfer(resource, account, TransferRecordInput{
+		Operation:        entity.TransferOperationShare,
+		TriggerSource:    triggerSource,
+		PreviousShareURL: previousShareURL,
+		ResultURL:        result.ShareURL,
+		FileID:           resource.Fid,
+		OccurredAt:       now,
+		DurationMS:       time.Since(startedAt).Milliseconds(),
+	}); err != nil {
+		utils.Error("[SHARE] 记录分享链路失败 (resource=%d): %v", resource.ID, err)
+	}
+
 	utils.Info("[SHARE] 重新分享成功 - resource=%d, save_url=%s", resource.ID, result.ShareURL)
-	return TransferResult{Success: true, SaveURL: result.ShareURL, Fid: result.Fid}
+	return TransferResult{Success: true, SaveURL: result.ShareURL, Fid: resource.Fid}
 }

@@ -44,10 +44,10 @@ func GetGlobalLinkCheckService() services.LinkCheckService {
 }
 
 // GetGlobalScheduler 获取全局调度器实例（单例模式）
-func GetGlobalScheduler(hotDramaRepo repo.HotDramaRepository, readyResourceRepo repo.ReadyResourceRepository, resourceRepo repo.ResourceRepository, systemConfigRepo repo.SystemConfigRepository, panRepo repo.PanRepository, cksRepo repo.CksRepository, tagRepo repo.TagRepository, categoryRepo repo.CategoryRepository, taskItemRepo repo.TaskItemRepository, taskRepo repo.TaskRepository) *GlobalScheduler {
+func GetGlobalScheduler(hotDramaRepo repo.HotDramaRepository, readyResourceRepo repo.ReadyResourceRepository, resourceRepo repo.ResourceRepository, systemConfigRepo repo.SystemConfigRepository, panRepo repo.PanRepository, cksRepo repo.CksRepository, tagRepo repo.TagRepository, categoryRepo repo.CategoryRepository, taskItemRepo repo.TaskItemRepository, taskRepo repo.TaskRepository, transferRecordRepos ...repo.TransferRecordRepository) *GlobalScheduler {
 	once.Do(func() {
 		globalScheduler = &GlobalScheduler{
-			manager: NewManager(hotDramaRepo, readyResourceRepo, resourceRepo, systemConfigRepo, panRepo, cksRepo, tagRepo, categoryRepo, taskItemRepo, taskRepo),
+			manager: NewManager(hotDramaRepo, readyResourceRepo, resourceRepo, systemConfigRepo, panRepo, cksRepo, tagRepo, categoryRepo, taskItemRepo, taskRepo, transferRecordRepos...),
 		}
 	})
 	return globalScheduler
@@ -285,21 +285,16 @@ func (gs *GlobalScheduler) IsCleanupSchedulerRunning() bool {
 	return gs.manager.IsCleanupRunning()
 }
 
-// UpdateSchedulerStatusWithCleanup 根据配置立即启停自动清理调度器
-// SC-002：配置变更立即生效，无需重启
+// UpdateSchedulerStatusWithCleanup keeps backward compatibility with old
+// clients. Cleanup is now mandatory, so disabling it is ignored.
 func (gs *GlobalScheduler) UpdateSchedulerStatusWithCleanup(enabled bool) {
 	gs.mutex.Lock()
 	defer gs.mutex.Unlock()
 
-	if enabled {
-		if !gs.manager.IsCleanupRunning() {
-			utils.Info("系统配置启用转存文件自动清理，启动定时任务")
-			gs.manager.StartCleanupScheduler()
-		}
-	} else {
-		if gs.manager.IsCleanupRunning() {
-			utils.Info("系统配置禁用转存文件自动清理，停止定时任务")
-			gs.manager.StopCleanupScheduler()
-		}
+	if !enabled {
+		utils.Warn("转存文件清理为固定策略，忽略禁用请求")
+	}
+	if !gs.manager.IsCleanupRunning() {
+		gs.manager.StartCleanupScheduler()
 	}
 }

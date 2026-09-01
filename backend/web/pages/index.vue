@@ -530,7 +530,7 @@ const updatePageSeo = () => {
 
   // 设置HTML属性和canonical链接
   const config = useRuntimeConfig()
-  const baseUrl = config.public.siteUrl || 'https://pan.l9.lc' // 从环境变量获取
+  const baseUrl = config.public.siteUrl || 'https://52juyou.com' // 从环境变量获取
   const params = new URLSearchParams()
   if (route.query?.search) params.set('search', route.query.search as string)
   if (route.query?.platform) params.set('platform', route.query.platform as string)

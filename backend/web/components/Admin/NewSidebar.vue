@@ -162,6 +162,12 @@ const operationItems = ref([
     active: (route: any) => route.path.startsWith('/admin/data-transfer')
   },
   {
+    to: '/admin/transfer-records',
+    label: '转存链路记录',
+    icon: 'fas fa-route',
+    active: (route: any) => route.path.startsWith('/admin/transfer-records')
+  },
+  {
     to: '/admin/seo',
     label: 'SEO',
     icon: 'fas fa-search',
@@ -226,4 +232,4 @@ const systemItems = ref([
   font-family: 'Font Awesome 6 Free';
   font-weight: 900;
 }
-</style> 
+</style>
