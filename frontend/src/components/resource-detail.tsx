@@ -20,6 +20,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { SearchLoadingOverlay } from "@/components/search-loading-overlay";
 import {
   formatResourceDate,
   inferResourceType,
@@ -172,6 +173,7 @@ export function ResourceDetail({ resource, backHref }: ResourceDetailProps) {
 
   return (
     <div className="flex min-h-screen flex-col bg-transparent text-foreground">
+      {transferStatus === "loading" ? <SearchLoadingOverlay mode={resourceType === "视频" ? "video" : "resource"} variant="link" /> : null}
       <a
         className="fixed top-3 left-3 z-50 -translate-y-20 rounded-lg bg-foreground px-3 py-2 text-sm font-medium text-background transition-transform focus:translate-y-0"
         href="#resource-content"

@@ -267,10 +267,11 @@ export function SearchResults({
         return dateSort === "desc" ? rightValue - leftValue : leftValue - rightValue;
       });
   const dateSortLabel = dateSort === "default" ? "默认排序" : dateSort === "desc" ? "最新优先" : "最早优先";
+  const isOpening = Object.values(stageStates).some((state) => state.status === "opening");
 
   return (
     <div className="flex flex-col bg-transparent text-foreground">
-      {isLoading || isPending ? <SearchLoadingOverlay /> : null}
+      {isLoading || isPending ? <SearchLoadingOverlay mode={mode} /> : isOpening ? <SearchLoadingOverlay mode={mode} variant="link" /> : null}
       <a
         className="fixed top-3 left-3 z-50 -translate-y-20 rounded-lg bg-foreground px-3 py-2 text-sm font-medium text-background transition-transform focus:translate-y-0"
         href="#result-list"

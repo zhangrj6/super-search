@@ -61,7 +61,7 @@ export function ResourceSearch() {
 
   return (
     <main className="flex min-h-screen flex-col overflow-hidden bg-transparent">
-      {isPending ? <SearchLoadingOverlay /> : null}
+      {isPending ? <SearchLoadingOverlay mode={mode} /> : null}
       <section className="relative z-10 mx-auto flex min-h-[calc(100svh-7rem)] w-full max-w-5xl flex-1 flex-col justify-center px-5 py-12 sm:px-8 sm:py-16">
         <div
           id="search"

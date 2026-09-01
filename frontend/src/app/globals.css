@@ -162,6 +162,11 @@ a {
   50% { transform: translateY(104vh); }
 }
 
+@keyframes search-loading-sweep {
+  from { transform: translateX(-180%); }
+  to { transform: translateX(320%); }
+}
+
 :root {
   --background: #f7f8fc;
   --foreground: #111827;

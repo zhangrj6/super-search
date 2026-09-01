@@ -1,9 +1,15 @@
+"use client";
+
 import { SearchLoadingOverlay } from "@/components/search-loading-overlay";
+import { useSearchParams } from "next/navigation";
 
 export default function SearchLoading() {
+  const searchParams = useSearchParams();
+  const mode = searchParams.get("mode") === "video" ? "video" : "resource";
+
   return (
     <div className="min-h-screen bg-transparent text-foreground" aria-busy="true">
-      <SearchLoadingOverlay />
+      <SearchLoadingOverlay mode={mode} />
       <header className="border-b border-border bg-background">
         <div className="mx-auto flex h-18 max-w-5xl items-center gap-4 px-5 sm:px-8">
           <div className="size-8 rounded-lg bg-primary" />

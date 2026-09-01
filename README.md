@@ -56,7 +56,7 @@ pnpm install
 pnpm dev
 ```
 
-`URLDB_API_BASE` defaults to `http://localhost:3030/api` for local development.
+`URLDB_API_BASE` defaults to `https://52juyou.com/api` for local development.
 
 ## Backend development
 
